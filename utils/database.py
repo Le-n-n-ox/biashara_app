@@ -35,12 +35,21 @@ def load_transactions_from_db() -> pd.DataFrame:
     conn = sqlite3.connect(DB_PATH)
     try:
         df = pd.read_sql("SELECT * FROM transactions", conn)
+        
+        # FIX: Rename SQLite's lowercase columns to match our App's Title Case expectations
+        df.rename(columns={
+            "date": "Date", 
+            "amount": "Amount", 
+            "entity": "Entity", 
+            "category": "Category"
+        }, inplace=True)
+        
         conn.close()
         return df
     except Exception:
         conn.close()
         return pd.DataFrame(columns=["Date", "Amount", "Entity", "Category"])
-
+    
 def clear_db():
     """Clears all records from the database."""
     init_db()

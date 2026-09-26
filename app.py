@@ -3,9 +3,10 @@ import pandas as pd
 import os
 from dotenv import load_dotenv
 
-# Import modularized AI router and database functions
+# Import modularized AI router, database functions, and fraud detector
 from utils.ai_router import process_sms_with_ai
-from utils.database import init_db, save_transactions_to_db, load_transactions_from_db
+from utils.database import init_db, save_transactions_to_db, load_transactions_from_db, clear_db
+from utils.fraud_detector import analyze_mpesa_fraud
 
 # --- Config & Initialization ---
 load_dotenv()
@@ -24,6 +25,14 @@ if "ledger_df" not in st.session_state:
 with st.sidebar:
     st.header("⚙️ Settings")
     st.info(f"**Active AI:** {MODEL_PROVIDER}\n\n*Change `MODEL_PROVIDER` in your `.env` to switch.*")
+    
+    # Wipe Database Button
+    if st.button("🗑️ Clear Ledger Data", type="secondary", use_container_width=True):
+        clear_db()
+        st.session_state["ledger_df"] = pd.DataFrame(columns=["Date", "Amount", "Entity", "Category"])
+        st.success("Database wiped clean!")
+        st.rerun()
+
     st.markdown("---")
     st.markdown("### 💡 Tips")
     st.markdown("- Paste raw SMS text exactly as received.\n- The AI will automatically clean and categorize the data.")
@@ -55,40 +64,55 @@ with tab_ledger:
             if not sms_input.strip():
                 st.warning("⚠️ Please paste some messages first.")
             else:
-                with st.spinner(f"AI ({MODEL_PROVIDER}) is analyzing your transactions..."):
-                    try:
-                        # Call modularized function from utils/ai_router.py
-                        data_list = process_sms_with_ai(sms_input, MODEL_PROVIDER)
-                        
-                        df = pd.DataFrame(data_list)
-                        
-                        # Save DataFrame permanently to SQLite Database
-                        save_transactions_to_db(df)
-                        
-                        # Reload full history from DB into session state
-                        st.session_state["ledger_df"] = load_transactions_from_db()
-                        
-                        # --- Render Ledger ---
-                        current_df = st.session_state["ledger_df"]
-                        st.dataframe(current_df, use_container_width=True, hide_index=True)
-                        
-                        if "Amount" in current_df.columns:
-                            total = pd.to_numeric(current_df["Amount"], errors="coerce").sum()
+                # --- Fraud & Scam Check ---
+                fraud_check = analyze_mpesa_fraud(sms_input)
+                
+                if fraud_check["is_suspicious"]:
+                    st.error(fraud_check["reason"])
+                    st.warning("🛡️ Security Protection: This message has been blocked from entering your ledger.")
+                else:
+                    with st.spinner(f"AI ({MODEL_PROVIDER}) is analyzing your transactions..."):
+                        try:
+                            # Process SMS via AI
+                            data_list = process_sms_with_ai(sms_input, MODEL_PROVIDER)
                             
-                            m_col1, m_col2 = st.columns(2)
-                            m_col1.metric(label="Total Tracked Amount", value=f"KES {total:,.2f}")
+                            df = pd.DataFrame(data_list)
                             
-                            csv_data = current_df.to_csv(index=False).encode('utf-8')
-                            m_col2.download_button(
-                                label="📥 Download CSV",
-                                data=csv_data,
-                                file_name="mpesa_daily_ledger.csv",
-                                mime="text/csv",
-                                use_container_width=True
-                            )
-                        
-                    except Exception as e:
-                        st.error(f"Processing Error: {e}")
+                            # --- Strict Output Cleaning & Filtering ---
+                            if not df.empty and "Amount" in df.columns:
+                                df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
+                                # Filter out $0 or negative hallucinated amounts
+                                df = df[df["Amount"] > 0]
+                            
+                            if not df.empty:
+                                # Save clean entries to SQLite DB
+                                save_transactions_to_db(df)
+                                # Reload full history into session state
+                                st.session_state["ledger_df"] = load_transactions_from_db()
+                            else:
+                                st.warning("⚠️ No valid non-zero transaction data could be extracted.")
+
+                            # --- Render Ledger ---
+                            current_df = st.session_state["ledger_df"]
+                            st.dataframe(current_df, use_container_width=True, hide_index=True)
+                            
+                            if "Amount" in current_df.columns and not current_df.empty:
+                                total = pd.to_numeric(current_df["Amount"], errors="coerce").sum()
+                                
+                                m_col1, m_col2 = st.columns(2)
+                                m_col1.metric(label="Total Tracked Amount", value=f"KES {total:,.2f}")
+                                
+                                csv_data = current_df.to_csv(index=False).encode('utf-8')
+                                m_col2.download_button(
+                                    label="📥 Download CSV",
+                                    data=csv_data,
+                                    file_name="mpesa_daily_ledger.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                            
+                        except Exception as e:
+                            st.error(f"Processing Error: {e}")
         else:
             # Render from session state / database history
             if "ledger_df" in st.session_state and not st.session_state["ledger_df"].empty:
@@ -137,7 +161,7 @@ with tab_analytics:
             # Group data by category and sum the amounts
             category_group = analytics_df.groupby("Category")["Amount"].sum()
             
-            # Render a native Streamlit bar chart
+            # Render native Streamlit bar chart
             st.bar_chart(category_group)
         else:
             st.warning("Required columns ('Category' and 'Amount') not found in dataset for charts.")

@@ -48,7 +48,7 @@ def process_sms_with_ai(sms_input: str, model_provider: str) -> list[dict]:
         
     elif model_provider == "GEMINI":
         client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        response = client.models.generate_content(model='gemini-3.8-flash', contents=prompt)
         raw_output = response.text
         
     elif model_provider == "OLLAMA":

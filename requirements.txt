@@ -1,10 +1,20 @@
+# Core UI & Data
 streamlit
-openai
 pandas
-
-google-genai
-ollama
-
 python-dotenv
+
+# AI Pipeline & Output Enforcement
+openai
 google-genai
 ollama
+pydantic
+
+# WhatsApp Webhook (feature/steve)
+fastapi
+uvicorn
+python-multipart
+twilio
+
+# Memory Cache (Uncomment the one you are configuring)
+# redis
+# supabase

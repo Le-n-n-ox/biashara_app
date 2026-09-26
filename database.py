@@ -68,6 +68,21 @@ def update_entity_memory(entity: str, category: str):
     conn.commit()
     conn.close()
 
+def update_transaction_category(transaction_code: str, category: str):
+    """Update the Category of an already-saved transaction row, e.g. after
+    a person answers a WhatsApp clarification question about it."""
+    if not transaction_code or not category:
+        return
+
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        'UPDATE transactions SET "Category" = ? WHERE "Transaction Code" = ?',
+        (category, transaction_code),
+    )
+    conn.commit()
+    conn.close()
+
 def get_entity_memory() -> dict:
     """Return learned entity-to-category mappings."""
     init_db()

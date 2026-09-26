@@ -1,0 +1,143 @@
+/* ============================================================
+   Biashara Bookkeeper — Design tokens
+   Paper/ink palette with meaning-coded accents:
+   green = money in, terracotta = money out, navy = ledger/ink
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    --ink: #16283A;
+    --ink-soft: #5B6B78;
+    --paper: #F6F5F0;
+    --surface: #FFFFFF;
+    --border: #E4E1D8;
+    --green: #1C8A5D;
+    --green-soft: #E8F3EC;
+    --terracotta: #B3402A;
+    --terracotta-soft: #F7EAE6;
+}
+
+/* ---------- Base ---------- */
+.stApp {
+    background-color: var(--paper);
+}
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+    color: var(--ink);
+}
+
+/* ---------- Header / title ---------- */
+h1 {
+    font-family: 'Fraunces', serif !important;
+    font-weight: 600 !important;
+    font-size: 2.4rem !important;
+    color: var(--ink) !important;
+    letter-spacing: -0.01em;
+}
+h1 + div p {
+    color: var(--ink-soft) !important;
+    font-size: 1.02rem;
+}
+
+/* ---------- Metric cards, color-coded by meaning ----------
+   1st column = income (green), 2nd = expense (terracotta), 3rd = net (ink) */
+div[data-testid="stMetric"] {
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    padding: 18px 20px;
+    border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(22, 40, 58, 0.04);
+}
+div[data-testid="column"]:nth-of-type(1) div[data-testid="stMetric"] {
+    border-left: 3px solid var(--green);
+}
+div[data-testid="column"]:nth-of-type(2) div[data-testid="stMetric"] {
+    border-left: 3px solid var(--terracotta);
+}
+div[data-testid="column"]:nth-of-type(3) div[data-testid="stMetric"] {
+    border-left: 3px solid var(--ink);
+}
+div[data-testid="stMetricValue"] {
+    color: var(--ink) !important;
+    font-weight: 700 !important;
+    font-variant-numeric: tabular-nums;
+}
+div[data-testid="stMetricLabel"] {
+    color: var(--ink-soft) !important;
+    font-weight: 600 !important;
+    font-size: 0.8rem !important;
+}
+
+/* ---------- Sidebar ---------- */
+section[data-testid="stSidebar"] {
+    background-color: var(--surface);
+    border-right: 1px solid var(--border);
+}
+section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
+    font-family: 'Inter', sans-serif !important;
+    color: var(--ink) !important;
+}
+
+/* ---------- Buttons ---------- */
+div.stButton > button[kind="primary"] {
+    background-color: var(--green);
+    color: white;
+    border-radius: 8px;
+    padding: 0.55rem 1rem;
+    font-weight: 600;
+    border: none;
+    box-shadow: 0 2px 6px rgba(28, 138, 93, 0.25);
+    transition: background-color 0.15s ease;
+}
+div.stButton > button[kind="primary"]:hover {
+    background-color: #15694a;
+    color: white;
+}
+div.stButton > button[kind="secondary"] {
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    color: var(--terracotta);
+    font-weight: 500;
+}
+
+/* ---------- Text area (SMS input) ---------- */
+.stTextArea textarea {
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background-color: var(--surface);
+    font-family: 'Inter', sans-serif;
+}
+.stTextArea textarea:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 0 1px var(--green);
+}
+
+/* ---------- Expander ---------- */
+div[data-testid="stExpander"] {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background-color: var(--surface);
+}
+
+/* ---------- Ledger table ---------- */
+div[data-testid="stDataFrame"] {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+div[data-testid="stDataFrame"] * {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Tabs ---------- */
+button[data-baseweb="tab"] {
+    font-weight: 600;
+    color: var(--ink-soft);
+}
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: var(--green);
+}
+div[data-baseweb="tab-highlight"] {
+    background-color: var(--green) !important;
+}

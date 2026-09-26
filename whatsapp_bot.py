@@ -6,6 +6,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 from dotenv import load_dotenv
 
 from utils.parsing import process_receipt_pipeline, process_with_ai
+from utils.ledger_ai import ask_ledger_ai
 from database import save_transactions_to_db, load_transactions_from_db, update_entity_memory, update_transaction_category
 
 load_dotenv()
@@ -21,6 +22,7 @@ PENDING_CLARIFICATION: dict[str, dict] = {}
 # Separate pending state for "I wasn't sure what you meant, did you want X?"
 # confirmations -- keyed by sender, value is the original ambiguous text.
 PENDING_AMBIGUOUS: dict[str, str] = {}
+AI_CONTEXT: dict[str, list] = {}
 
 # Keyword -> canonical category, used to interpret a person's free-text
 # clarification reply ("rent", "utilities", etc.)
@@ -50,116 +52,19 @@ def looks_like_phishing(text: str) -> bool:
     return any(phrase in lowered for phrase in _SCAM_PHRASES)
 
 
-QUERY_KEYWORDS = ("show", "list", "last", "recent", "total", "balance", "summary", "history", "how much", "find", "search")
-
-
-def is_query(text: str) -> bool:
-    lowered = text.strip().lower()
-    return any(keyword in lowered for keyword in QUERY_KEYWORDS)
-
-
-_QUERY_STOPWORDS = {
-    "show", "me", "my", "list", "the", "a", "an", "please", "transactions", "transaction",
-    "logs", "log", "records", "record", "all", "i", "made", "did", "have", "has",
-    "with", "for", "about", "regarding", "find", "search", "what", "whats", "is", "of", "on", "do", "did",
-    "hey", "hi", "hello", "are", "you", "there", "thanks", "thank", "ok", "okay", "pls",
-}
-
-
-def extract_search_term(text: str) -> str:
-    """Pulls the likely subject out of a loosely-phrased query, e.g.
-    'show me transactions i made to David Omondi' -> 'david omondi'."""
-    lowered = text.strip().lower().strip(" ?!.")
-    # Prefer whatever follows a directional preposition -- this is usually the actual subject
-    match = re.search(r"\b(?:to|from|with|about|regarding)\s+(.+)$", lowered)
-    candidate = match.group(1) if match else lowered
-    candidate = candidate.strip(" ?!.")
-    tokens = [t for t in candidate.split() if t not in _QUERY_STOPWORDS]
-    return " ".join(tokens)
-
-
-def find_known_mention(text: str, df: pd.DataFrame) -> str | None:
-    """Checks whether the message mentions any entity or category that's
-    ALREADY in the ledger. This generalizes far beyond a fixed keyword list --
-    if someone asks about a name they've actually transacted with, in any
-    phrasing, this catches it without needing to guess every possible wording."""
-    if df.empty:
-        return None
-    lowered = text.lower()
-    for value in pd.concat([df["Entity"], df["Category"]]).dropna().unique():
-        value = str(value).strip()
-        if value and value.lower() in lowered:
-            return value
-    return None
-
-
-# Fields people might ask for that the ledger simply doesn't store. Answering
-# honestly here beats endlessly asking for clarification on something no
-# amount of rephrasing will ever find.
-_UNAVAILABLE_FIELD_KEYWORDS = {
-    "number": "phone numbers or contact details",
-    "phone": "phone numbers or contact details",
-    "contact": "phone numbers or contact details",
-    "mobile": "phone numbers or contact details",
-    "address": "physical addresses",
-    "email": "email addresses",
-}
-
-
-def handle_query(text: str, known_mention: str | None = None) -> str:
-    """Answers questions about transactions already in the ledger."""
-    lowered = text.strip().lower()
+def handle_ai_query(text: str, sender: str) -> str:
     df = load_transactions_from_db()
-    if df.empty:
-        return "Your ledger is empty so far — forward an M-Pesa SMS to get started."
-
-    if any(word in lowered for word in ("total", "balance", "summary")) and not known_mention:
-        income = df.loc[df["Type"] == "Income", "Amount (KES)"].sum()
-        expenses = df.loc[df["Type"] == "Expense", "Amount (KES)"].sum()
-        net = income - expenses
-        return (
-            f"📊 Summary so far:\nReceived: KES {income:,.2f}\n"
-            f"Spent: KES {expenses:,.2f}\nNet: KES {net:,.2f}"
-        )
-
-    if any(word in lowered for word in ("last", "recent")) and not known_mention:
-        count_match = re.search(r"last (\d+)", lowered)
-        n = min(int(count_match.group(1)), 10) if count_match else 3
-        recent = df.tail(n)
-        lines = []
-        for _, tx in recent.iterrows():
-            verb = "from" if tx["Type"] == "Income" else "to"
-            lines.append(f"• KES {tx['Amount (KES)']:,.2f} {verb} {tx['Entity']} ({tx['Category']}) on {tx['Date']}")
-        return f"🧾 Your last {len(recent)} transaction(s):\n" + "\n".join(lines)
-
-    # Prefer an exact known entity/category match over the fuzzy extractor --
-    # it's more reliable when we already know it's a real name from the ledger.
-    search_term = (known_mention or extract_search_term(text)).lower()
-    matches = df[
-        df["Entity"].str.lower().str.contains(search_term, na=False, regex=False)
-        | df["Category"].str.lower().str.contains(search_term, na=False, regex=False)
-    ] if search_term else pd.DataFrame()
-
-    if not matches.empty:
-        lines = []
-        for _, tx in matches.tail(5).iterrows():
-            verb = "from" if tx["Type"] == "Income" else "to"
-            lines.append(f"• KES {tx['Amount (KES)']:,.2f} {verb} {tx['Entity']} ({tx['Category']}) on {tx['Date']}")
-        results_block = "\n".join(lines)
-
-        for keyword, field_name in _UNAVAILABLE_FIELD_KEYWORDS.items():
-            if keyword in lowered:
-                return (
-                    f"I don't store {field_name} — only transaction records "
-                    f"(amount, date, category, channel). Here's what I do have "
-                    f"for '{search_term}':\n{results_block}"
-                )
-
-        return f"🔎 Found {len(matches)} matching transaction(s) for '{search_term}':\n{results_block}"
-
-    if search_term:
-        return f"I couldn't find anything matching '{search_term}'. Try 'show my last 3 transactions' or 'what's my total'."
-    return "I couldn't tell what you're looking for. Try 'show my last 3 transactions', 'what's my total', or a name/category to search for."
+    history = AI_CONTEXT.get(sender, [])
+    result = ask_ledger_ai(
+        user_message=text,
+        ledger_df=df,
+        provider=MODEL_PROVIDER,
+        conversation_history=history,
+    )
+    response = result.get("response", "Sorry, I couldn't process that request.")
+    history.append({"user": text, "assistant": response})
+    AI_CONTEXT[sender] = history[-10:]
+    return response
 
 
 AFFIRMATIVE_REPLIES = {"yes", "yeah", "yep", "yup", "sure", "correct", "please", "please do", "ok", "okay"}
@@ -171,26 +76,18 @@ def looks_like_receipt(text: str) -> bool:
     an ambiguous fragment) never triggers an AI call at all -- only messages
     that plausibly ARE a forwarded M-Pesa SMS do."""
     lowered = text.lower()
-    if "ksh" in lowered or "confirmed" in lowered:
+    if "confirmed" in lowered and any(
+        phrase in lowered for phrase in ("sent to", "paid to", "received")
+    ):
         return True
     return bool(re.search(r"^[A-Z0-9]{8,12}\b", text.strip(), re.MULTILINE))
 
 
 def ambiguous_clarification_reply(raw_text: str, sender: str) -> str:
-    """Stores the pending ambiguous message and returns a clarifying question,
-    phrased generically when no clear subject could be extracted."""
-    search_term = extract_search_term(raw_text)
     PENDING_AMBIGUOUS[sender] = raw_text
-    if search_term:
-        return (
-            f"I'm not sure what you meant. Did you want me to look up transactions "
-            f"related to '{search_term}'? Reply yes/no — or forward the exact M-Pesa "
-            f"SMS to log a new transaction."
-        )
     return (
-        "I'm not sure what you meant by that. Forward an M-Pesa SMS to log a "
-        "transaction, or ask something like 'show my last 3 transactions' or "
-        "'what's my total'."
+        "I'm not sure I understood. "
+        "Could you rephrase your request or tell me exactly what you want to know?"
     )
 
 
@@ -261,7 +158,7 @@ async def receive_whatsapp_message(Body: str = Form(...), From: str = Form(...))
         lowered_reply = raw_text.strip().lower()
         if lowered_reply in AFFIRMATIVE_REPLIES:
             del PENDING_AMBIGUOUS[From]
-            resp.message(handle_query(pending_text))
+            resp.message(handle_ai_query(pending_text, From))
             return Response(content=str(resp), media_type="application/xml")
         elif lowered_reply in NEGATIVE_REPLIES:
             del PENDING_AMBIGUOUS[From]
@@ -276,7 +173,6 @@ async def receive_whatsapp_message(Body: str = Form(...), From: str = Form(...))
     # "balance" ("New M-PESA balance is Ksh..."), which would otherwise falsely
     # match the query keyword list on every single legitimate receipt. ---
     receipt_shaped = looks_like_receipt(raw_text)
-    mention = None if receipt_shaped else find_known_mention(raw_text, load_transactions_from_db())
 
     if receipt_shaped:
         try:
@@ -288,15 +184,9 @@ async def receive_whatsapp_message(Body: str = Form(...), From: str = Form(...))
             # Looked like a receipt but didn't actually parse -- ask rather than reject flatly.
             resp.message(ambiguous_clarification_reply(raw_text, From))
             return Response(content=str(resp), media_type="application/xml")
-    elif is_query(raw_text) or mention:
-        # Doesn't look like a receipt, but does look like a question -- or it
-        # mentions a real name/category from the ledger, whatever the phrasing.
-        # Answer straight from the ledger, never touching the AI.
-        resp.message(handle_query(raw_text, known_mention=mention))
-        return Response(content=str(resp), media_type="application/xml")
     else:
-        # Neither a receipt nor a recognized query -- ask what they meant.
-        resp.message(ambiguous_clarification_reply(raw_text, From))
+        answer = handle_ai_query(raw_text, From)
+        resp.message(answer)
         return Response(content=str(resp), media_type="application/xml")
 
     new_df = pd.DataFrame(transactions)

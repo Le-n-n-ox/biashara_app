@@ -57,6 +57,10 @@ def process_receipt_pipeline(raw_text: str) -> list[dict]:
             if date_match else datetime.now().strftime("%Y-%m-%d")
         )
 
+        # --- EXTRACT PHONE NUMBER ---
+        phone_match = re.search(r"\b((?:07|01)\d{8})\b", line)
+        phone = phone_match.group(1) if phone_match else ""
+
         lower_line = line.lower()
         if "received ksh" in lower_line:
             txn_type = "Income"
@@ -76,7 +80,14 @@ def process_receipt_pipeline(raw_text: str) -> list[dict]:
         if not amount_match:
             continue
         amount = float(amount_match.group(1).replace(",", ""))
+        
         entity = entity_match.group(1).strip() if entity_match else "UNKNOWN"
+        
+        # --- ATTACH PHONE NUMBER TO ENTITY ---
+        if phone:
+            entity = entity.replace(phone, "").strip()
+            entity = f"{entity} - {phone}"
+
         entity_upper = entity.upper()
 
         if any(name in entity_upper for name in ("SUPERMARKET", "CARREFOUR", "ZUCCHINI", "CHANDARANA", "FOODPLUS", "WHOLESALER")):
@@ -126,6 +137,15 @@ def process_with_ai(raw_text: str, provider: str) -> list[dict]:
             contains_url = bool(re.search(r"(https?://|www\.|bit\.ly|tinyurl\.com|t\.co/)", line, re.IGNORECASE))
             if not code_has_digit or contains_url or analyze_mpesa_fraud(line)["is_suspicious"]:
                 continue
+            
+            # --- EXTRACT PHONE NUMBER FOR AI FALLBACK ---
+            phone_match = re.search(r"\b((?:07|01)\d{8})\b", line)
+            phone = phone_match.group(1) if phone_match else ""
+            
+            entity = str(item.get("Entity", "UNKNOWN")).strip()
+            if phone:
+                entity = entity.replace(phone, "").strip()
+                entity = f"{entity} - {phone}"
 
             try:
                 amount = float(str(item.get("Amount (KES)", item.get("Amount", 0))).replace(",", ""))
@@ -134,7 +154,7 @@ def process_with_ai(raw_text: str, provider: str) -> list[dict]:
             parsed_data.append({
                 "Transaction Code": item.get("Transaction Code", codes[index]),
                 "Date": item.get("Date", datetime.now().strftime("%Y-%m-%d")),
-                "Entity": item.get("Entity", "UNKNOWN"),
+                "Entity": entity,
                 "Type": item.get("Type", "Income" if "received" in line.lower() else "Expense"),
                 "Amount (KES)": amount,
                 "Category": item.get("Category", "Unknown"),

@@ -6,5 +6,4 @@ google-genai
 ollama
 
 python-dotenv
-google-genai
-ollama
+SpeechRecognition

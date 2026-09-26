@@ -16,16 +16,22 @@
     --green-soft: #E8F3EC;
     --terracotta: #B3402A;
     --terracotta-soft: #F7EAE6;
+    --shadow: 0 1px 2px rgba(22, 40, 58, 0.04);
 }
 
 /* ---------- Base ---------- */
 .stApp {
     background-color: var(--paper);
+    color: var(--ink);
+    transition: background-color .2s ease, color .2s ease;
 }
 html, body, [class*="css"] {
     font-family: 'Inter', sans-serif;
     color: var(--ink);
 }
+p, span, label, .stMarkdown { color: var(--ink); }
+small, .stCaption { color: var(--ink-soft) !important; }
+hr { border-color: var(--border) !important; }
 
 /* ---------- Header / title ---------- */
 h1 {
@@ -47,7 +53,7 @@ div[data-testid="stMetric"] {
     border: 1px solid var(--border);
     padding: 18px 20px;
     border-radius: 10px;
-    box-shadow: 0 1px 2px rgba(22, 40, 58, 0.04);
+    box-shadow: var(--shadow);
 }
 div[data-testid="column"]:nth-of-type(1) div[data-testid="stMetric"] {
     border-left: 3px solid var(--green);
@@ -97,8 +103,12 @@ div.stButton > button[kind="primary"]:hover {
 div.stButton > button[kind="secondary"] {
     border-radius: 8px;
     border: 1px solid var(--border);
+    background-color: var(--surface);
     color: var(--terracotta);
     font-weight: 500;
+}
+div.stButton > button[kind="secondary"]:hover {
+    border-color: var(--terracotta);
 }
 
 /* ---------- Text area (SMS input) ---------- */
@@ -106,6 +116,7 @@ div.stButton > button[kind="secondary"] {
     border-radius: 8px;
     border: 1px solid var(--border);
     background-color: var(--surface);
+    color: var(--ink);
     font-family: 'Inter', sans-serif;
 }
 .stTextArea textarea:focus {
@@ -119,6 +130,22 @@ div[data-testid="stExpander"] {
     border-radius: 10px;
     background-color: var(--surface);
 }
+div[data-testid="stExpander"] summary {
+    font-weight: 600;
+    padding: .6rem 1rem;
+}
+
+/* ---------- Alerts ---------- */
+div[data-testid="stAlertContentSuccess"], .stSuccess {
+    background: var(--green-soft) !important;
+    border-left: 4px solid var(--green) !important;
+}
+div[data-testid="stAlertContentError"], .stError,
+div[data-testid="stAlertContentWarning"], .stWarning {
+    background: var(--terracotta-soft) !important;
+    border-left: 4px solid var(--terracotta) !important;
+}
+div[data-testid="stAlert"] p { color: var(--ink) !important; }
 
 /* ---------- Ledger table ---------- */
 div[data-testid="stDataFrame"] {
@@ -141,3 +168,10 @@ button[data-baseweb="tab"][aria-selected="true"] {
 div[data-baseweb="tab-highlight"] {
     background-color: var(--green) !important;
 }
+
+/* ---------- Spinner ---------- */
+div[data-testid="stSpinner"] p { color: var(--ink-soft); }
+
+/* ---------- Scrollbar ---------- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }

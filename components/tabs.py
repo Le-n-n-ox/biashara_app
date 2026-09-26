@@ -11,12 +11,22 @@ def render_ledger_and_analytics(df: pd.DataFrame):
             st.info("📭 Your ledger is currently empty. Open the expander above to process your first receipts.")
         else:
             display_df = df.copy()
+            display_df["Channel"] = display_df["Channel"].fillna("Unknown") if "Channel" in display_df else "Unknown"
+
+            channel_options = sorted(display_df["Channel"].unique())
+            selected_channels = st.multiselect(
+                "Filter by payment channel",
+                options=channel_options,
+                default=channel_options,
+            )
+            display_df = display_df[display_df["Channel"].isin(selected_channels)]
+
             display_df["Type"] = display_df["Type"].map({"Income": "🟢 Income", "Expense": "🔴 Expense"})
-            
+
             st.dataframe(display_df, use_container_width=True, hide_index=True)
             st.download_button(
                 "📥 Export to CSV",
-                data=df.to_csv(index=False).encode("utf-8"),
+                data=display_df.to_csv(index=False).encode("utf-8"),
                 file_name=f"biashara_ledger_{datetime.now():%Y%m%d}.csv",
                 mime="text/csv",
             )
@@ -41,3 +51,14 @@ def render_ledger_and_analytics(df: pd.DataFrame):
             st.markdown("### Cash Flow Comparison")
             cash_flow = df.groupby("Type")["Amount (KES)"].sum()
             st.bar_chart(cash_flow)
+
+            st.markdown("### Payment Channel Breakdown")
+            st.caption("How money moved: Send Money, Paybill, Till (Buy Goods), or Received.")
+            channel_df = df.copy()
+            channel_df["Channel"] = channel_df["Channel"].fillna("Unknown") if "Channel" in channel_df else "Unknown"
+            channel_summary = channel_df.groupby("Channel")["Amount (KES)"].sum().sort_values(ascending=False)
+            channel_chart_col, channel_table_col = st.columns(2)
+            with channel_chart_col:
+                st.bar_chart(channel_summary)
+            with channel_table_col:
+                st.dataframe(channel_summary.rename("Amount (KES)"), use_container_width=True)

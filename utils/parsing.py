@@ -14,6 +14,23 @@ from utils.fraud_detector import analyze_mpesa_fraud
 from database import get_entity_memory, update_entity_memory
 
 
+def infer_channel(line: str) -> str:
+    """Distinguishes how the money moved, based on M-Pesa's own SMS wording:
+    - 'sent to NAME PHONE' (no account ref)      -> Send Money
+    - 'sent to BUSINESS for account ...'         -> Paybill
+    - 'paid to BUSINESS' (Buy Goods/Till)        -> Till (Buy Goods)
+    - 'received Ksh...'                          -> Received
+    """
+    lowered = line.lower()
+    if "received ksh" in lowered:
+        return "Received"
+    if "sent to" in lowered:
+        return "Paybill" if "for account" in lowered else "Send Money"
+    if "paid to" in lowered:
+        return "Till (Buy Goods)"
+    return "Unknown"
+
+
 def process_receipt_pipeline(raw_text: str) -> list[dict]:
     """Rule-based (no AI) parser. Includes an inline fraud-detection guard,
     so any caller of this function already gets suspicious lines filtered out."""
@@ -21,7 +38,17 @@ def process_receipt_pipeline(raw_text: str) -> list[dict]:
     for line in raw_text.splitlines():
         line = line.strip()
         txn_match = re.search(r"^([A-Z0-9]{8,12})\b", line)
-        if not txn_match or analyze_mpesa_fraud(line)["is_suspicious"]:
+
+        # A real Safaricom transaction code always mixes letters and digits
+        # (e.g. "QGH7XJ2K1"); a plain word like "CONFIRMED" matches the same
+        # character class but has zero digits. Reject the latter.
+        code_has_digit = bool(txn_match) and any(ch.isdigit() for ch in txn_match.group(1))
+
+        # Real M-Pesa confirmations never contain links. A URL is a hard
+        # signal of phishing regardless of what fraud_detector.py decides.
+        contains_url = bool(re.search(r"(https?://|www\.|bit\.ly|tinyurl\.com|t\.co/)", line, re.IGNORECASE))
+
+        if not txn_match or not code_has_digit or contains_url or analyze_mpesa_fraud(line)["is_suspicious"]:
             continue
 
         date_match = re.search(r"\bon (\d{1,2}/\d{1,2}/\d{2})\b", line)
@@ -70,6 +97,7 @@ def process_receipt_pipeline(raw_text: str) -> list[dict]:
             "Type": txn_type,
             "Amount (KES)": amount,
             "Category": category,
+            "Channel": infer_channel(line),
         })
     return parsed_data
 
@@ -87,6 +115,18 @@ def process_with_ai(raw_text: str, provider: str) -> list[dict]:
             if index >= len(codes):
                 continue
             line = lines[index] if index < len(lines) else ""
+
+            # The AI model has no concept of fraud -- it just extracts fields
+            # from whatever text it's given. Without this check, a scam message
+            # that the rule-based parser correctly rejected (which is WHY we
+            # ended up in this AI-fallback branch at all) would sail straight
+            # through here unchecked. Apply the same guards as the rule-based path.
+            code = str(item.get("Transaction Code", codes[index]))
+            code_has_digit = any(ch.isdigit() for ch in code)
+            contains_url = bool(re.search(r"(https?://|www\.|bit\.ly|tinyurl\.com|t\.co/)", line, re.IGNORECASE))
+            if not code_has_digit or contains_url or analyze_mpesa_fraud(line)["is_suspicious"]:
+                continue
+
             try:
                 amount = float(str(item.get("Amount (KES)", item.get("Amount", 0))).replace(",", ""))
             except (TypeError, ValueError):
@@ -98,6 +138,7 @@ def process_with_ai(raw_text: str, provider: str) -> list[dict]:
                 "Type": item.get("Type", "Income" if "received" in line.lower() else "Expense"),
                 "Amount (KES)": amount,
                 "Category": item.get("Category", "Unknown"),
+                "Channel": item.get("Channel", infer_channel(line)),
             })
     else:
         for index, item in enumerate(ai_data):

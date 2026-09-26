@@ -17,7 +17,8 @@ def init_db():
             "Entity" TEXT,
             "Type" TEXT,
             "Amount (KES)" REAL,
-            "Category" TEXT
+            "Category" TEXT,
+            "Channel" TEXT
         )
     """)
     cursor.execute("""
@@ -27,6 +28,14 @@ def init_db():
         )
     """)
     conn.commit()
+
+    # Migration: a ledger.db created before this feature won't have the
+    # Channel column yet. Add it in place so existing data isn't lost.
+    existing_columns = [row[1] for row in cursor.execute('PRAGMA table_info(transactions)').fetchall()]
+    if "Channel" not in existing_columns:
+        cursor.execute('ALTER TABLE transactions ADD COLUMN "Channel" TEXT')
+        conn.commit()
+
     conn.close()
 
 def save_transactions_to_db(df: pd.DataFrame):
@@ -44,7 +53,7 @@ def load_transactions_from_db() -> pd.DataFrame:
         return df
     except Exception:
         conn.close()
-        return pd.DataFrame(columns=["Transaction Code", "Date", "Entity", "Type", "Amount (KES)", "Category"])
+        return pd.DataFrame(columns=["Transaction Code", "Date", "Entity", "Type", "Amount (KES)", "Category", "Channel"])
 
 def clear_db():
     init_db()

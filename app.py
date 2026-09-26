@@ -5,19 +5,19 @@ from dotenv import load_dotenv
 
 # Import modularized AI router, database functions, and fraud detector
 from utils.ai_router import process_sms_with_ai
-from utils.database import init_db, save_transactions_to_db, load_transactions_from_db, clear_db
+from utils.database import (
+    init_db, save_transactions_to_db, load_transactions_from_db, clear_db,
+    get_entity_memory, update_entity_memory
+)
 from utils.fraud_detector import analyze_mpesa_fraud
 
 # --- Config & Initialization ---
 load_dotenv()
 MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "OLLAMA").upper()
 
-# Initialize the SQLite database on startup
 init_db()
-
 st.set_page_config(page_title="Biashara Bookkeeper", page_icon="📊", layout="wide")
 
-# Load existing historical data from SQLite into session state on startup
 if "ledger_df" not in st.session_state:
     st.session_state["ledger_df"] = load_transactions_from_db()
 
@@ -26,7 +26,6 @@ with st.sidebar:
     st.header("⚙️ Settings")
     st.info(f"**Active AI:** {MODEL_PROVIDER}\n\n*Change `MODEL_PROVIDER` in your `.env` to switch.*")
     
-    # Wipe Database Button
     if st.button("🗑️ Clear Ledger Data", type="secondary", use_container_width=True):
         clear_db()
         st.session_state["ledger_df"] = pd.DataFrame(columns=["Date", "Amount", "Entity", "Category"])
@@ -34,8 +33,18 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.markdown("### 💡 Tips")
-    st.markdown("- Paste raw SMS text exactly as received.\n- The AI will automatically clean and categorize the data.")
+    
+    # Display Lennox's Memory Cache
+    st.markdown("### 🧠 AI Memory Cache")
+    memory_cache = get_entity_memory()
+    if memory_cache:
+        st.caption("Auto-categorizing these known entities:")
+        for ent, cat in list(memory_cache.items())[:5]: # Show top 5
+            st.caption(f"- **{ent}** → {cat}")
+        if len(memory_cache) > 5:
+            st.caption(f"...and {len(memory_cache) - 5} more.")
+    else:
+        st.caption("No entities learned yet. Process receipts to train the AI.")
 
 # --- Main Header ---
 st.title("📊 Biashara Bookkeeper")
@@ -64,7 +73,6 @@ with tab_ledger:
             if not sms_input.strip():
                 st.warning("⚠️ Please paste some messages first.")
             else:
-                # --- Fraud & Scam Check ---
                 fraud_check = analyze_mpesa_fraud(sms_input)
                 
                 if fraud_check["is_suspicious"]:
@@ -73,26 +81,34 @@ with tab_ledger:
                 else:
                     with st.spinner(f"AI ({MODEL_PROVIDER}) is analyzing your transactions..."):
                         try:
-                            # Process SMS via AI
                             data_list = process_sms_with_ai(sms_input, MODEL_PROVIDER)
+                            
+                            # --- LENNOX'S FEATURE: Memory Cache Override & Learning ---
+                            current_memory = get_entity_memory()
+                            for item in data_list:
+                                entity_name = item.get("Entity", "").strip().upper()
+                                if not entity_name: 
+                                    continue
+                                
+                                # If we know this entity, force the cached category
+                                if entity_name in current_memory:
+                                    item["Category"] = current_memory[entity_name]
+                                else:
+                                    # If new, save the AI's guess to memory for next time
+                                    update_entity_memory(entity_name, item.get("Category", "Unknown"))
                             
                             df = pd.DataFrame(data_list)
                             
-                            # --- Strict Output Cleaning & Filtering ---
                             if not df.empty and "Amount" in df.columns:
                                 df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce").fillna(0)
-                                # Filter out $0 or negative hallucinated amounts
                                 df = df[df["Amount"] > 0]
                             
                             if not df.empty:
-                                # Save clean entries to SQLite DB
                                 save_transactions_to_db(df)
-                                # Reload full history into session state
                                 st.session_state["ledger_df"] = load_transactions_from_db()
                             else:
                                 st.warning("⚠️ No valid non-zero transaction data could be extracted.")
 
-                            # --- Render Ledger ---
                             current_df = st.session_state["ledger_df"]
                             st.dataframe(current_df, use_container_width=True, hide_index=True)
                             
@@ -114,7 +130,6 @@ with tab_ledger:
                         except Exception as e:
                             st.error(f"Processing Error: {e}")
         else:
-            # Render from session state / database history
             if "ledger_df" in st.session_state and not st.session_state["ledger_df"].empty:
                 df = st.session_state["ledger_df"]
                 st.dataframe(df, use_container_width=True, hide_index=True)
@@ -140,11 +155,8 @@ with tab_analytics:
     st.markdown("Visual breakdown of your transaction categories and totals.")
     st.divider()
 
-    # Check if ledger data exists in session state / database
     if "ledger_df" in st.session_state and not st.session_state["ledger_df"].empty:
         analytics_df = st.session_state["ledger_df"].copy()
-        
-        # Ensure Amount is treated numerically for aggregations
         analytics_df["Amount"] = pd.to_numeric(analytics_df["Amount"], errors="coerce")
 
         col_metric1, col_metric2 = st.columns(2)
@@ -158,13 +170,9 @@ with tab_analytics:
         st.markdown("### 📊 Totals by Category")
         
         if "Category" in analytics_df.columns and "Amount" in analytics_df.columns:
-            # Group data by category and sum the amounts
             category_group = analytics_df.groupby("Category")["Amount"].sum()
-            
-            # Render native Streamlit bar chart
             st.bar_chart(category_group)
         else:
             st.warning("Required columns ('Category' and 'Amount') not found in dataset for charts.")
-            
     else:
         st.info("ℹ️ No transaction data found yet. Please process receipts in the **Data Entry & Ledger** tab to generate analytics.")

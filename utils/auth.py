@@ -91,36 +91,50 @@ def register_user(name: str, email: str, phone: str, account_type: str,
 
     password_hash, salt = _hash_password(password)
 
+    conn = _get_conn()
     try:
-        conn = _get_conn()
         cursor = conn.cursor()
-        cursor.execute(
-            """INSERT INTO users (name, email, phone, account_type, account_number, password_hash, salt)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-            (name, email, phone, account_type, account_number, password_hash, salt),
-        )
-        conn.commit()
-        cursor.close()
+        try:
+            cursor.execute(
+                """INSERT INTO users (name, email, phone, account_type, account_number, password_hash, salt)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (name, email, phone, account_type, account_number, password_hash, salt),
+            )
+            conn.commit()
+            return True, "Account created. You can now log in."
+        except psycopg2.IntegrityError as e:
+            # Postgres leaves the connection in a failed-transaction state after
+            # an IntegrityError -- must roll back before it can be reused/closed cleanly.
+            conn.rollback()
+            err_msg = str(e)
+            if "email" in err_msg:
+                return False, "This email is already registered."
+            return False, "This phone number is already registered."
+        finally:
+            cursor.close()
+    finally:
         conn.close()
-        return True, "Account created. You can now log in."
-    except psycopg2.IntegrityError as e:
-        err_msg = str(e)
-        if "email" in err_msg:
-            return False, "This email is already registered."
-        return False, "This phone number is already registered."
 
 def authenticate_user(email: str, password: str) -> tuple[bool, str, dict | None]:
     email = email.strip().lower()
     conn = _get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        """SELECT id, name, email, phone, account_type, account_number, password_hash, salt
-           FROM users WHERE email = %s""",
-        (email,),
-    )
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT id, name, email, phone, account_type, account_number, password_hash, salt
+                   FROM users WHERE email = %s""",
+                (email,),
+            )
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+    except Exception:
+        # A transient DB hiccup should show a friendly message, not a raw
+        # traceback on the login page.
+        return False, "Couldn't reach the database right now. Please try again in a moment.", None
+    finally:
+        conn.close()
 
     if not row:
         return False, "No account found with that email.", None

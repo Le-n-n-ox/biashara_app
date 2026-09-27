@@ -1,9 +1,25 @@
+# Core UI & Data
 streamlit
-openai
 pandas
+python-dotenv
+<<<<<<< HEAD
+SpeechRecognition
+=======
+streamlit-shadcn-ui
 
+# AI Pipeline & Output Enforcement
+openai
 google-genai
 ollama
+pydantic
 
-python-dotenv
-SpeechRecognition
+# WhatsApp Webhook (feature/steve)
+fastapi
+uvicorn
+python-multipart
+twilio
+
+# Memory Cache (Uncomment the one you are configuring)
+# redis
+# supabase
+>>>>>>> origin/develop

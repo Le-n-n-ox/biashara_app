@@ -1,0 +1,15 @@
+[theme]
+# The main accent color (turns your primary buttons and sliders Professional Blue)
+primaryColor = "#0056B3"
+
+# The main background color of the app
+backgroundColor = "#F4F7F9"
+
+# The background of the sidebar and expanders (white/light gray)
+secondaryBackgroundColor = "#FFFFFF"
+
+# The main text color (dark navy/slate for readability)
+textColor = "#1E293B"
+
+# Font style
+font = "sans serif"

@@ -11,6 +11,8 @@ _DARK_VARS = """
     --green-soft: #16302459;
     --terracotta: #E0725A;
     --terracotta-soft: #3A211D;
+    --button-text: #08130E;
+    --control-text: #E9EDF0;
     --shadow: 0 1px 3px rgba(0,0,0,.4);
 """
 
@@ -49,7 +51,7 @@ def render_theme_toggle():
     cols = st.columns(3)
     opts = {"system": "System", "light": "Light", "dark": "Dark"}
     for col, key in zip(cols, opts):
-        if col.button(opts[key], key=f"theme_{key}", use_container_width=True,
+        if col.button(opts[key], key=f"theme_{key}", width="stretch",
                        type="primary" if st.session_state.theme == key else "secondary"):
             st.session_state.theme = key
             st.rerun()

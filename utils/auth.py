@@ -1,35 +1,24 @@
-import psycopg2
 import hashlib
 import hmac
 import os
 import re
+import sqlite3
 import streamlit as st
-from dotenv import load_dotenv
 
-load_dotenv()
+DB_PATH = os.getenv("DB_PATH", "ledger.db")
 
-def _get_conn():
-    # Try fetching from standard environment variables first
-    db_url = os.getenv("DATABASE_URL")
-    
-    # Fallback to Streamlit Secrets if environment is not ready
-    if not db_url:
-        try:
-            db_url = st.secrets["DATABASE_URL"]
-        except Exception:
-            pass
-            
-    if not db_url:
-        raise ValueError("DATABASE_URL environment variable or secret is not set")
-        
-    return psycopg2.connect(db_url)
+
+def _get_conn() -> sqlite3.Connection:
+    directory = os.path.dirname(DB_PATH)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    return sqlite3.connect(DB_PATH)
 
 def init_auth_db():
-    conn = _get_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
+    with _get_conn() as conn:
+        conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             email TEXT NOT NULL UNIQUE,
             phone TEXT NOT NULL UNIQUE,
@@ -37,12 +26,9 @@ def init_auth_db():
             account_number TEXT NOT NULL,
             password_hash TEXT NOT NULL,
             salt TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
-    """)
-    conn.commit()
-    cursor.close()
-    conn.close()
+        """)
 
 def _hash_password(password: str, salt: bytes = None) -> tuple[str, str]:
     salt = salt or os.urandom(16)
@@ -92,18 +78,14 @@ def register_user(name: str, email: str, phone: str, account_type: str,
     password_hash, salt = _hash_password(password)
 
     try:
-        conn = _get_conn()
-        cursor = conn.cursor()
-        cursor.execute(
+        with _get_conn() as conn:
+            conn.execute(
             """INSERT INTO users (name, email, phone, account_type, account_number, password_hash, salt)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (name, email, phone, account_type, account_number, password_hash, salt),
-        )
-        conn.commit()
-        cursor.close()
-        conn.close()
+            )
         return True, "Account created. You can now log in."
-    except psycopg2.IntegrityError as e:
+    except sqlite3.IntegrityError as e:
         err_msg = str(e)
         if "email" in err_msg:
             return False, "This email is already registered."
@@ -111,16 +93,12 @@ def register_user(name: str, email: str, phone: str, account_type: str,
 
 def authenticate_user(email: str, password: str) -> tuple[bool, str, dict | None]:
     email = email.strip().lower()
-    conn = _get_conn()
-    cursor = conn.cursor()
-    cursor.execute(
-        """SELECT id, name, email, phone, account_type, account_number, password_hash, salt
-           FROM users WHERE email = %s""",
-        (email,),
-    )
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    with _get_conn() as conn:
+        row = conn.execute(
+            """SELECT id, name, email, phone, account_type, account_number, password_hash, salt
+               FROM users WHERE email = ?""",
+            (email,),
+        ).fetchone()
 
     if not row:
         return False, "No account found with that email.", None
@@ -148,8 +126,13 @@ def render_auth_gate():
     with login_tab:
         with st.form("login_form"):
             email = st.text_input("Email", placeholder="you@business.com")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Log In", type="primary", use_container_width=True)
+            show_password = st.checkbox("Show password", key="login_show_password")
+            password = st.text_input(
+                "Password",
+                type="default" if show_password else "password",
+                placeholder="Enter your password",
+            )
+            submitted = st.form_submit_button("Log In", type="primary", width="stretch")
 
         if submitted:
             ok, message, user = authenticate_user(email, password)
@@ -169,7 +152,7 @@ def render_auth_gate():
             account_number = st.text_input(f"{account_type} Number", placeholder="e.g. 174379")
             password = st.text_input("Password", type="password")
             confirm_password = st.text_input("Confirm Password", type="password")
-            submitted = st.form_submit_button("Create Account", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Create Account", type="primary", width="stretch")
 
         if submitted:
             if password != confirm_password:

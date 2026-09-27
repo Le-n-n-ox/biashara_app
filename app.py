@@ -29,8 +29,15 @@ AI_PROVIDERS = {
 }
 DEFAULT_PROVIDER_LABEL = next((label for label, p in AI_PROVIDERS.items() if p == MODEL_PROVIDER), "Ollama")
 
-init_db()
 st.set_page_config(page_title="Biashara Bookkeeper", page_icon="📘", layout="wide", initial_sidebar_state="expanded")
+try:
+    init_db()
+except ValueError:
+    st.error(
+        "Database configuration is missing. Set DATABASE_URL in your local .env "
+        "file or add it under your Streamlit app's Settings > Secrets."
+    )
+    st.stop()
 
 # --- Load Custom CSS ---
 try:

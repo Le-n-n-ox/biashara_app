@@ -2,19 +2,26 @@ import os
 import psycopg2
 from psycopg2.extras import execute_values
 import pandas as pd
+import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_URL = os.getenv("DATABASE_URL")
-
 def _get_conn():
-    if not DB_URL:
-        raise ValueError("DATABASE_URL environment variable is not set in .env")
-    return psycopg2.connect(DB_URL)
+    db_url = os.getenv("DATABASE_URL")
+    
+    if not db_url:
+        try:
+            db_url = st.secrets["DATABASE_URL"]
+        except Exception:
+            pass
+            
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable or secret is not set")
+        
+    return psycopg2.connect(db_url)
 
 def init_db():
-    """Initializes the PostgreSQL database with transactions and entity memory."""
     conn = _get_conn()
     cursor = conn.cursor()
     
@@ -38,7 +45,6 @@ def init_db():
     """)
     conn.commit()
 
-    # Migration check for Channel column
     cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='transactions';")
     existing_columns = [row[0] for row in cursor.fetchall()]
     if "Channel" not in existing_columns:

@@ -5,6 +5,10 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
+from utils.theme import apply_theme, render_theme_toggle
+from utils.auth import render_auth_gate
+
+
 # Database & Utilities
 from database import init_db, load_transactions_from_db, save_transactions_to_db
 from utils.fraud_detector import analyze_mpesa_fraud
@@ -35,7 +39,13 @@ try:
 except FileNotFoundError:
     pass
 
-# --- Main App Execution ---
+
+apply_theme()  # must run AFTER styles.css so overrides win the cascade
+
+render_auth_gate()  # blocks here (st.stop) until the user logs in or registers
+
+# --- Main App Execution (only reached once authenticated) ---
+
 selected_label, selected_provider = render_sidebar(AI_PROVIDERS, DEFAULT_PROVIDER_LABEL)
 
 st.title("📘 Biashara Bookkeeper")

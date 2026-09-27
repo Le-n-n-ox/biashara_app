@@ -1,10 +1,14 @@
 import streamlit as st
 from database import get_entity_memory, clear_db
 from utils.theme import render_theme_toggle
+from utils.auth import render_logout_button
 
 def render_sidebar(ai_providers: dict, default_provider_label: str):
     """Renders the configuration sidebar and returns the selected AI provider."""
     with st.sidebar:
+        render_logout_button()
+        st.divider()
+
         render_theme_toggle()
         st.divider()
 

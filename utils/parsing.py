@@ -113,7 +113,7 @@ def process_receipt_pipeline(raw_text: str) -> list[dict]:
     return parsed_data
 
 
-def process_with_ai(raw_text: str, provider: str) -> list[dict]:
+def process_with_ai(raw_text: str, provider: str,*args, **kwargs) -> list[dict]:
     """AI-assisted parser with entity-memory categorization. Falls back to the
     rule-based parser's own results when the AI returns nothing usable."""
     parsed_data = process_receipt_pipeline(raw_text)

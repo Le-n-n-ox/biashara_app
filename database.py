@@ -3,8 +3,16 @@ import sqlite3
 
 import pandas as pd
 
-
 DB_PATH = os.getenv("DB_PATH", "ledger.db")
+TRANSACTION_COLUMNS = (
+    "Transaction Code",
+    "Date",
+    "Entity",
+    "Type",
+    "Amount (KES)",
+    "Category",
+    "Channel",
+)
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -55,10 +63,7 @@ def save_transactions_to_db(df: pd.DataFrame, user_id: int | None = None) -> Non
     init_db()
     records = df.copy()
     records["user_id"] = user_id
-    columns = [
-        "Transaction Code", "Date", "Entity", "Type",
-        "Amount (KES)", "Category", "Channel", "user_id",
-    ]
+    columns = [*TRANSACTION_COLUMNS, "user_id"]
     records = records.reindex(columns=columns)
     placeholders = ", ".join("?" for _ in columns)
     quoted_columns = ", ".join(f'"{column}"' for column in columns)
@@ -72,12 +77,11 @@ def save_transactions_to_db(df: pd.DataFrame, user_id: int | None = None) -> Non
 def load_transactions_from_db(user_id: int | None = None) -> pd.DataFrame:
     init_db()
     with _get_conn() as conn:
-        df = pd.read_sql_query(
+        return pd.read_sql_query(
             'SELECT * FROM transactions WHERE "user_id" IS ?',
             conn,
             params=(user_id,),
-        )
-    return df.drop(columns=["user_id"], errors="ignore")
+        ).drop(columns=["user_id"], errors="ignore")
 
 
 def clear_db(user_id: int | None = None) -> None:

@@ -1,74 +1,60 @@
-"""
-Self-contained auth module: user registration + login.
-Creates its own `users` table in the same SQLite file your
-ledger uses, so it doesn't touch existing ledger schema/logic.
-"""
-import sqlite3
+import psycopg2
 import hashlib
 import hmac
 import os
 import re
 import streamlit as st
+from dotenv import load_dotenv
 
-DB_PATH = os.getenv("DB_PATH", "ledger.db")  # must match database.py's DB_PATH exactly # adjust to match database.py's actual path
-
+load_dotenv()
 
 def _get_conn():
-    return sqlite3.connect(DB_PATH)
-
+    # Try fetching from standard environment variables first
+    db_url = os.getenv("DATABASE_URL")
+    
+    # Fallback to Streamlit Secrets if environment is not ready
+    if not db_url:
+        try:
+            db_url = st.secrets["DATABASE_URL"]
+        except Exception:
+            pass
+            
+    if not db_url:
+        raise ValueError("DATABASE_URL environment variable or secret is not set")
+        
+    return psycopg2.connect(db_url)
 
 def init_auth_db():
-    with _get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE,
-                phone TEXT NOT NULL UNIQUE,
-                account_type TEXT NOT NULL,      -- 'Till' or 'Paybill'
-                account_number TEXT NOT NULL,
-                password_hash TEXT NOT NULL,
-                salt TEXT NOT NULL,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        conn.commit()
+    conn = _get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT NOT NULL UNIQUE,
+            phone TEXT NOT NULL UNIQUE,
+            account_type TEXT NOT NULL,
+            account_number TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            salt TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    conn.commit()
+    cursor.close()
+    conn.close()
 
-        # Automatic schema migration for existing user tables
-        cursor = conn.cursor()
-        existing_columns = [row[1] for row in cursor.execute('PRAGMA table_info(users)').fetchall()]
-
-        columns_to_add = {
-            "email": "TEXT DEFAULT ''",
-            "phone": "TEXT DEFAULT ''",
-            "account_type": "TEXT DEFAULT ''",
-            "account_number": "TEXT DEFAULT ''",
-            "password_hash": "TEXT DEFAULT ''",
-            "salt": "TEXT DEFAULT ''"
-        }
-
-        for col_name, col_type in columns_to_add.items():
-            if col_name not in existing_columns:
-                cursor.execute(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}')
-
-        conn.commit()
-
-# ---------- Password hashing (PBKDF2, no extra dependency) ----------
 def _hash_password(password: str, salt: bytes = None) -> tuple[str, str]:
     salt = salt or os.urandom(16)
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100_000)
     return hashed.hex(), salt.hex()
-
 
 def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
     salt_bytes = bytes.fromhex(stored_salt)
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt_bytes, 100_000)
     return hmac.compare_digest(hashed.hex(), stored_hash)
 
-
-# ---------- Validation ----------
 def _clean_phone(phone: str) -> str:
-    """Normalizes Kenyan phone numbers to 2547XXXXXXXX / 2541XXXXXXXX format."""
     digits = re.sub(r"\D", "", phone.strip())
     if digits.startswith("0") and len(digits) == 10:
         digits = "254" + digits[1:]
@@ -77,16 +63,12 @@ def _clean_phone(phone: str) -> str:
             digits = "254" + digits
     return digits
 
-
 def _is_valid_phone(phone: str) -> bool:
     return bool(re.match(r"^254[71]\d{8}$", phone))
-
 
 def _is_valid_email(email: str) -> bool:
     return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email.strip()))
 
-
-# ---------- Core operations ----------
 def register_user(name: str, email: str, phone: str, account_type: str,
                    account_number: str, password: str) -> tuple[bool, str]:
     name = name.strip()
@@ -110,28 +92,35 @@ def register_user(name: str, email: str, phone: str, account_type: str,
     password_hash, salt = _hash_password(password)
 
     try:
-        with _get_conn() as conn:
-            conn.execute(
-                """INSERT INTO users (name, email, phone, account_type, account_number, password_hash, salt)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (name, email, phone, account_type, account_number, password_hash, salt),
-            )
-            conn.commit()
+        conn = _get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO users (name, email, phone, account_type, account_number, password_hash, salt)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+            (name, email, phone, account_type, account_number, password_hash, salt),
+        )
+        conn.commit()
+        cursor.close()
+        conn.close()
         return True, "Account created. You can now log in."
-    except sqlite3.IntegrityError as e:
-        if "email" in str(e):
+    except psycopg2.IntegrityError as e:
+        err_msg = str(e)
+        if "email" in err_msg:
             return False, "This email is already registered."
         return False, "This phone number is already registered."
 
-
 def authenticate_user(email: str, password: str) -> tuple[bool, str, dict | None]:
     email = email.strip().lower()
-    with _get_conn() as conn:
-        row = conn.execute(
-            """SELECT id, name, email, phone, account_type, account_number, password_hash, salt
-               FROM users WHERE email = ?""",
-            (email,),
-        ).fetchone()
+    conn = _get_conn()
+    cursor = conn.cursor()
+    cursor.execute(
+        """SELECT id, name, email, phone, account_type, account_number, password_hash, salt
+           FROM users WHERE email = %s""",
+        (email,),
+    )
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
 
     if not row:
         return False, "No account found with that email.", None
@@ -145,11 +134,7 @@ def authenticate_user(email: str, password: str) -> tuple[bool, str, dict | None
         "account_type": account_type, "account_number": account_number,
     }
 
-
-# ---------- Streamlit UI ----------
 def render_auth_gate():
-    """Call this at the top of app.py. Returns True once logged in
-    (and stops the script for unauthenticated users)."""
     init_auth_db()
 
     if st.session_state.get("user"):
@@ -193,20 +178,13 @@ def render_auth_gate():
                 ok, message = register_user(name, email, phone, account_type, account_number, password)
                 if ok:
                     st.success(message)
-                    cleaned_phone = _clean_phone(phone)
-                    from utils.notifications import send_whatsapp_welcome
-                    sent, notify_message = send_whatsapp_welcome(name.strip(), cleaned_phone)
-                    if not sent:
-                        st.caption(notify_message)  # quiet notice, doesn't block registration
                 else:
                     st.error(message)
 
-    st.stop()  # prevents the rest of app.py from rendering until authenticated
+    st.stop()
     return False
 
-
 def render_logout_button():
-    """Drop into the sidebar. Shows the logged-in user's name and a logout button."""
     user = st.session_state.get("user")
     if not user:
         return

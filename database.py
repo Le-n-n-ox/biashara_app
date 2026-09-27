@@ -1,221 +1,270 @@
 import os
-import psycopg2
-from psycopg2.extras import execute_values
+
 import pandas as pd
+import psycopg2
+from psycopg2 import sql
+from psycopg2.extras import execute_values
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
 
+_TRANSACTION_COLUMNS = (
+    "Transaction Code",
+    "Date",
+    "Entity",
+    "Type",
+    "Amount (KES)",
+    "Category",
+    "Channel",
+)
+
+
 def _get_conn():
     db_url = os.getenv("DATABASE_URL")
-    
     if not db_url:
         try:
             db_url = st.secrets["DATABASE_URL"]
         except Exception:
             pass
-            
     if not db_url:
         raise ValueError("DATABASE_URL environment variable or secret is not set")
-        
     return psycopg2.connect(db_url)
+
 
 def init_db():
     conn = _get_conn()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS transactions (
-            "Transaction Code" TEXT,
-            "Date" TEXT,
-            "Entity" TEXT,
-            "Type" TEXT,
-            "Amount (KES)" REAL,
-            "Category" TEXT,
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS transactions (
+                    "Transaction Code" TEXT,
+                    "Date" TEXT,
+                    "Entity" TEXT,
+                    "Type" TEXT,
+                    "Amount (KES)" REAL,
+                    "Category" TEXT,
+                    "Channel" TEXT,
+                    user_id INTEGER
+                )
+                '''
+            )
+            cursor.execute(
+                "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS \"Channel\" TEXT"
+            )
+            cursor.execute(
+                "ALTER TABLE transactions ADD COLUMN IF NOT EXISTS user_id INTEGER"
+            )
+            cursor.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS entity_memory (
+                    entity TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    user_id INTEGER
+                )
+                '''
+            )
+            cursor.execute(
+                "ALTER TABLE entity_memory ADD COLUMN IF NOT EXISTS user_id INTEGER"
+            )
 
-            "Channel" TEXT
-        );
+            # Replace legacy single-column keys so the same code/entity can
+            # exist independently for different users.
+            for table, scoped_columns in (
+                ("transactions", {"Transaction Code", "user_id"}),
+                ("entity_memory", {"entity", "user_id"}),
+            ):
+                cursor.execute(
+                    """
+                    SELECT constraint_row.conname,
+                           array_agg(attribute_row.attname ORDER BY key_column.ordinality)
+                    FROM pg_constraint AS constraint_row
+                    JOIN unnest(constraint_row.conkey) WITH ORDINALITY
+                         AS key_column(attnum, ordinality) ON TRUE
+                    JOIN pg_attribute AS attribute_row
+                         ON attribute_row.attrelid = constraint_row.conrelid
+                        AND attribute_row.attnum = key_column.attnum
+                    WHERE constraint_row.conrelid = %s::regclass
+                      AND constraint_row.contype = 'p'
+                    GROUP BY constraint_row.conname
+                    """,
+                    (table,),
+                )
+                for constraint_name, columns in cursor.fetchall():
+                    if set(columns) != scoped_columns:
+                        cursor.execute(
+                            sql.SQL("ALTER TABLE {} DROP CONSTRAINT {} CASCADE").format(
+                                sql.Identifier(table), sql.Identifier(constraint_name)
+                            )
+                        )
 
-            "Channel" TEXT,
-            "user_id" INTEGER,
-            PRIMARY KEY ("Transaction Code", "user_id")
-        )
-
-    """)
-    
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS entity_memory (
-
-            entity TEXT PRIMARY KEY,
-            category TEXT
-        );
-    """)
-    conn.commit()
-
-    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='transactions';")
-    existing_columns = [row[0] for row in cursor.fetchall()]
-    if "Channel" not in existing_columns:
-        cursor.execute('ALTER TABLE transactions ADD COLUMN "Channel" TEXT;')
+            cursor.execute(
+                '''
+                CREATE UNIQUE INDEX IF NOT EXISTS transactions_user_code_idx
+                ON transactions (user_id, "Transaction Code")
+                WHERE user_id IS NOT NULL
+                '''
+            )
+            cursor.execute(
+                '''
+                CREATE UNIQUE INDEX IF NOT EXISTS transactions_unscoped_code_idx
+                ON transactions ("Transaction Code")
+                WHERE user_id IS NULL
+                '''
+            )
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS entity_memory_user_entity_idx
+                ON entity_memory (user_id, entity)
+                WHERE user_id IS NOT NULL
+                """
+            )
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS entity_memory_unscoped_entity_idx
+                ON entity_memory (entity)
+                WHERE user_id IS NULL
+                """
+            )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
-    cursor.close()
-    conn.close()
 
-def save_transactions_to_db(df: pd.DataFrame):
+def save_transactions_to_db(df: pd.DataFrame, user_id: int | None = None):
     if df.empty:
         return
     init_db()
-    conn = _get_conn()
-    cursor = conn.cursor()
-    
-    columns = df.columns.tolist()
-    values = [tuple(x) for x in df.to_numpy()]
-    insert_query = f"""
-        INSERT INTO transactions ("{'", "'.join(columns)}") 
-        VALUES %s 
-        ON CONFLICT ("Transaction Code") DO NOTHING;
-    """
-    execute_values(cursor, insert_query, values)
-    conn.commit()
-    cursor.close()
-
-            entity TEXT,
-            category TEXT,
-            user_id INTEGER,
-            PRIMARY KEY (entity, user_id)
-        )
-    """)
-    conn.commit()
-
-    # Migration: a ledger.db created before this feature won't have the
-    # Channel/user_id columns yet. Add them in place so existing data isn't lost.
-    tx_columns = [row[1] for row in cursor.execute('PRAGMA table_info(transactions)').fetchall()]
-    if "Channel" not in tx_columns:
-        cursor.execute('ALTER TABLE transactions ADD COLUMN "Channel" TEXT')
-    if "user_id" not in tx_columns:
-        cursor.execute('ALTER TABLE transactions ADD COLUMN "user_id" INTEGER')
-
-    mem_columns = [row[1] for row in cursor.execute('PRAGMA table_info(entity_memory)').fetchall()]
-    if "user_id" not in mem_columns:
-        cursor.execute('ALTER TABLE entity_memory ADD COLUMN "user_id" INTEGER')
-
-    conn.commit()
-    conn.close()
-
-
-def save_transactions_to_db(df: pd.DataFrame, user_id: int):
-    init_db()
-    df = df.copy()
-    df["user_id"] = user_id
-    conn = sqlite3.connect(DB_PATH)
-    df.to_sql("transactions", conn, if_exists="append", index=False)
-
-    conn.close()
-
-
-def load_transactions_from_db(user_id: int) -> pd.DataFrame:
-    init_db()
+    transactions = df.copy()
+    transactions = transactions[
+        [column for column in _TRANSACTION_COLUMNS if column in transactions.columns]
+    ]
+    transactions["user_id"] = user_id
+    columns = transactions.columns.tolist()
+    values = [tuple(row) for row in transactions.itertuples(index=False, name=None)]
+    query = sql.SQL("INSERT INTO transactions ({}) VALUES %s ON CONFLICT DO NOTHING").format(
+        sql.SQL(", ").join(sql.Identifier(column) for column in columns)
+    )
     conn = _get_conn()
     try:
-
-        df = pd.read_sql_query("SELECT * FROM transactions", conn)
-
-        df = pd.read_sql(
-            'SELECT * FROM transactions WHERE "user_id" = ?', conn, params=(user_id,)
-        )
-
-        conn.close()
-        return df.drop(columns=["user_id"], errors="ignore")
+        with conn.cursor() as cursor:
+            execute_values(cursor, query.as_string(conn), values)
+        conn.commit()
     except Exception:
+        conn.rollback()
+        raise
+    finally:
         conn.close()
-        return pd.DataFrame(columns=["Transaction Code", "Date", "Entity", "Type", "Amount (KES)", "Category", "Channel"])
+
+
+def load_transactions_from_db(user_id: int | None = None) -> pd.DataFrame:
+    init_db()
+    if user_id is None:
+        query = "SELECT * FROM transactions WHERE user_id IS NULL"
+        params = None
+    else:
+        query = "SELECT * FROM transactions WHERE user_id = %s"
+        params = (user_id,)
+    conn = _get_conn()
+    try:
+        df = pd.read_sql_query(query, conn, params=params)
+        return df.drop(columns=["user_id"], errors="ignore")
+    finally:
+        conn.close()
 
 
 def clear_db(user_id: int):
     init_db()
     conn = _get_conn()
-    cursor = conn.cursor()
-
-    cursor.execute("DELETE FROM transactions;")
-
-    cursor.execute('DELETE FROM transactions WHERE "user_id" = ?', (user_id,))
-
-    conn.commit()
-    cursor.close()
-    conn.close()
-
-
-def update_entity_memory(entity: str, category: str):
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM transactions WHERE user_id = %s", (user_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
-def update_entity_memory(entity: str, category: str, user_id: int):
-    """Save or update the learned category for an entity, scoped to one user's business."""
-
+def update_entity_memory(entity: str, category: str, user_id: int | None = None):
     if not entity or not category:
         return
     init_db()
-
+    entity = entity.strip().upper()
+    if user_id is None:
+        query = """
+            INSERT INTO entity_memory (entity, category, user_id) VALUES (%s, %s, NULL)
+            ON CONFLICT (entity) WHERE user_id IS NULL
+            DO UPDATE SET category = EXCLUDED.category
+        """
+        params = (entity, category)
+    else:
+        query = """
+            INSERT INTO entity_memory (entity, category, user_id) VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, entity) WHERE user_id IS NOT NULL
+            DO UPDATE SET category = EXCLUDED.category
+        """
+        params = (entity, category, user_id)
     conn = _get_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO entity_memory (entity, category) VALUES (%s, %s)
-        ON CONFLICT (entity) DO UPDATE SET category = EXCLUDED.category;
-    """, (entity.strip().upper(), category))
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT OR REPLACE INTO entity_memory (entity, category, user_id) VALUES (?, ?, ?)",
-        (entity.strip().upper(), category, user_id),
-    )
-
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
-def update_transaction_category(transaction_code: str, category: str):
-
-
-def update_transaction_category(transaction_code: str, category: str, user_id: int):
-    """Update the Category of an already-saved transaction row, e.g. after
-    a person answers a WhatsApp clarification question about it."""
-
+def update_transaction_category(
+    transaction_code: str, category: str, user_id: int | None = None
+):
     if not transaction_code or not category:
         return
     init_db()
-
+    if user_id is None:
+        query = '''
+            UPDATE transactions SET "Category" = %s
+            WHERE "Transaction Code" = %s AND user_id IS NULL
+        '''
+        params = (category, transaction_code)
+    else:
+        query = '''
+            UPDATE transactions SET "Category" = %s
+            WHERE "Transaction Code" = %s AND user_id = %s
+        '''
+        params = (category, transaction_code, user_id)
     conn = _get_conn()
-    cursor = conn.cursor()
-    cursor.execute('UPDATE transactions SET "Category" = %s WHERE "Transaction Code" = %s;', (category, transaction_code))
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        'UPDATE transactions SET "Category" = ? WHERE "Transaction Code" = ? AND "user_id" = ?',
-        (category, transaction_code, user_id),
-    )
-
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
-def get_entity_memory() -> dict:
+def get_entity_memory(user_id: int | None = None) -> dict[str, str]:
     init_db()
+    if user_id is None:
+        query = "SELECT entity, category FROM entity_memory WHERE user_id IS NULL"
+        params = None
+    else:
+        query = "SELECT entity, category FROM entity_memory WHERE user_id = %s"
+        params = (user_id,)
     conn = _get_conn()
-    cursor = conn.cursor()
-    cursor.execute("SELECT entity, category FROM entity_memory;")
-    rows = cursor.fetchall()
-    cursor.close()
-
-
-def get_entity_memory(user_id: int) -> dict:
-    """Return learned entity-to-category mappings for one user's business."""
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute(
-        "SELECT entity, category FROM entity_memory WHERE user_id = ?", (user_id,)
-    ).fetchall()
-
-    conn.close()
-    return {entity: category for entity, category in rows}
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        return {entity: category for entity, category in rows}
+    finally:
+        conn.close()

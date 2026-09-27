@@ -50,7 +50,7 @@ def init_auth_db():
         for col_name, col_type in columns_to_add.items():
             if col_name not in existing_columns:
                 cursor.execute(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}')
-        
+
         conn.commit()
 
 # ---------- Password hashing (PBKDF2, no extra dependency) ----------
@@ -193,6 +193,11 @@ def render_auth_gate():
                 ok, message = register_user(name, email, phone, account_type, account_number, password)
                 if ok:
                     st.success(message)
+                    cleaned_phone = _clean_phone(phone)
+                    from utils.notifications import send_whatsapp_welcome
+                    sent, notify_message = send_whatsapp_welcome(name.strip(), cleaned_phone)
+                    if not sent:
+                        st.caption(notify_message)  # quiet notice, doesn't block registration
                 else:
                     st.error(message)
 

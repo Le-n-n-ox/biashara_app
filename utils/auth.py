@@ -3,6 +3,7 @@ import hmac
 import os
 import re
 import sqlite3
+
 import streamlit as st
 
 DB_PATH = os.getenv("DB_PATH", "ledger.db")
@@ -14,49 +15,61 @@ def _get_conn() -> sqlite3.Connection:
         os.makedirs(directory, exist_ok=True)
     return sqlite3.connect(DB_PATH)
 
-def init_auth_db():
-    with _get_conn() as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL UNIQUE,
-            phone TEXT NOT NULL UNIQUE,
-            account_type TEXT NOT NULL,
-            account_number TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            salt TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-        """)
 
-def _hash_password(password: str, salt: bytes = None) -> tuple[str, str]:
+def init_auth_db() -> None:
+    with _get_conn() as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                phone TEXT NOT NULL UNIQUE,
+                account_type TEXT NOT NULL,
+                account_number TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+
+
+def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
     salt = salt or os.urandom(16)
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100_000)
     return hashed.hex(), salt.hex()
+
 
 def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
     salt_bytes = bytes.fromhex(stored_salt)
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt_bytes, 100_000)
     return hmac.compare_digest(hashed.hex(), stored_hash)
 
+
 def _clean_phone(phone: str) -> str:
     digits = re.sub(r"\D", "", phone.strip())
     if digits.startswith("0") and len(digits) == 10:
         digits = "254" + digits[1:]
-    elif digits.startswith("7") or digits.startswith("1"):
-        if len(digits) == 9:
-            digits = "254" + digits
+    elif (digits.startswith("7") or digits.startswith("1")) and len(digits) == 9:
+        digits = "254" + digits
     return digits
+
 
 def _is_valid_phone(phone: str) -> bool:
     return bool(re.match(r"^254[71]\d{8}$", phone))
 
+
 def _is_valid_email(email: str) -> bool:
     return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email.strip()))
 
-def register_user(name: str, email: str, phone: str, account_type: str,
-                   account_number: str, password: str) -> tuple[bool, str]:
+
+def register_user(
+    name: str,
+    email: str,
+    phone: str,
+    account_type: str,
+    account_number: str,
+    password: str,
+) -> tuple[bool, str]:
     name = name.strip()
     email = email.strip().lower()
     phone = _clean_phone(phone)
@@ -76,29 +89,35 @@ def register_user(name: str, email: str, phone: str, account_type: str,
         return False, "Password must be at least 6 characters."
 
     password_hash, salt = _hash_password(password)
-
     try:
         with _get_conn() as conn:
             conn.execute(
-            """INSERT INTO users (name, email, phone, account_type, account_number, password_hash, salt)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (name, email, phone, account_type, account_number, password_hash, salt),
+                """INSERT INTO users
+                   (name, email, phone, account_type, account_number, password_hash, salt)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (name, email, phone, account_type, account_number, password_hash, salt),
             )
         return True, "Account created. You can now log in."
-    except sqlite3.IntegrityError as e:
-        err_msg = str(e)
-        if "email" in err_msg:
+    except sqlite3.IntegrityError as error:
+        if "email" in str(error).lower():
             return False, "This email is already registered."
         return False, "This phone number is already registered."
+    except sqlite3.Error:
+        return False, "Could not create the account right now. Please try again."
+
 
 def authenticate_user(email: str, password: str) -> tuple[bool, str, dict | None]:
     email = email.strip().lower()
-    with _get_conn() as conn:
-        row = conn.execute(
-            """SELECT id, name, email, phone, account_type, account_number, password_hash, salt
-               FROM users WHERE email = ?""",
-            (email,),
-        ).fetchone()
+    try:
+        with _get_conn() as conn:
+            row = conn.execute(
+                """SELECT id, name, email, phone, account_type, account_number,
+                          password_hash, salt
+                   FROM users WHERE email = ?""",
+                (email,),
+            ).fetchone()
+    except sqlite3.Error:
+        return False, "Could not reach the database right now. Please try again.", None
 
     if not row:
         return False, "No account found with that email.", None
@@ -108,11 +127,16 @@ def authenticate_user(email: str, password: str) -> tuple[bool, str, dict | None
         return False, "Incorrect password.", None
 
     return True, "Login successful.", {
-        "id": user_id, "name": name, "email": email, "phone": phone,
-        "account_type": account_type, "account_number": account_number,
+        "id": user_id,
+        "name": name,
+        "email": email,
+        "phone": phone,
+        "account_type": account_type,
+        "account_number": account_number,
     }
 
-def render_auth_gate():
+
+def render_auth_gate() -> bool:
     init_auth_db()
 
     if st.session_state.get("user"):
@@ -146,8 +170,11 @@ def render_auth_gate():
         with st.form("register_form"):
             name = st.text_input("Full Name")
             email = st.text_input("Email", placeholder="you@business.com")
-            phone = st.text_input("Phone Number", placeholder="0712345678",
-                                   help="This links your business account to your M-Pesa number.")
+            phone = st.text_input(
+                "Phone Number",
+                placeholder="0712345678",
+                help="This links your business account to your M-Pesa number.",
+            )
             account_type = st.selectbox("Account Type", ["Till", "Paybill"])
             account_number = st.text_input(f"{account_type} Number", placeholder="e.g. 174379")
             password = st.text_input("Password", type="password")
@@ -167,12 +194,13 @@ def render_auth_gate():
     st.stop()
     return False
 
-def render_logout_button():
+
+def render_logout_button() -> None:
     user = st.session_state.get("user")
     if not user:
         return
     st.caption(f"Signed in as **{user['name']}**")
     st.caption(f"{user['account_type']}: {user['account_number']}")
-    if st.button("Log Out", use_container_width=True):
+    if st.button("Log Out", width="stretch"):
         del st.session_state["user"]
         st.rerun()

@@ -3,7 +3,7 @@ from database import get_entity_memory, clear_db
 from utils.theme import render_theme_toggle
 from utils.auth import render_logout_button
 
-def render_sidebar(ai_providers: dict, default_provider_label: str):
+def render_sidebar(ai_providers: dict, default_provider_label: str, user_id: int):
     """Renders the configuration sidebar and returns the selected AI provider."""
     with st.sidebar:
         render_logout_button()
@@ -24,7 +24,7 @@ def render_sidebar(ai_providers: dict, default_provider_label: str):
 
         st.divider()
         st.markdown("### Smart Memory")
-        memory_cache = get_entity_memory()
+        memory_cache = get_entity_memory(user_id)
         if memory_cache:
             st.caption("Auto-categorizing recurring entities:")
             for entity, category in list(memory_cache.items())[:5]:
@@ -36,7 +36,7 @@ def render_sidebar(ai_providers: dict, default_provider_label: str):
 
         st.divider()
         if st.button("Wipe Ledger Data", type="secondary", use_container_width=True):
-            clear_db()
+            clear_db(user_id)
             st.rerun()
 
         return selected_label, selected_provider

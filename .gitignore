@@ -1,8 +1,13 @@
+# Environments
 .env
+
+# Python Cache
 __pycache__/
+*.pyc
 
-.env
+# Databases
+*.db
+*.sqlite3
 
+# Data folders
 data/
-ledger.db
-ledger.db

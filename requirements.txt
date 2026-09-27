@@ -12,5 +12,6 @@ python-multipart
 twilio
 SpeechRecognition
 streamlit-mic-recorder
+phonenumbers
 # Optional: redis
 # Optional: supabase

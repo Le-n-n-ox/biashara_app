@@ -8,12 +8,14 @@ st.set_page_config(), init_db() side effects, or a ScriptRunContext error.
 """
 import re
 from datetime import datetime
+from functools import lru_cache
 
 from utils.ai_router import process_sms_with_ai
 from utils.fraud_detector import analyze_mpesa_fraud
 from database import get_entity_memory, update_entity_memory
 
 
+@lru_cache(maxsize=256)
 def infer_channel(line: str) -> str:
     """Distinguishes how the money moved, based on M-Pesa's own SMS wording:
     - 'sent to NAME PHONE' (no account ref)      -> Send Money
@@ -31,6 +33,7 @@ def infer_channel(line: str) -> str:
     return "Unknown"
 
 
+@lru_cache(maxsize=128)
 def process_receipt_pipeline(raw_text: str) -> list[dict]:
     """Rule-based (no AI) parser. Includes an inline fraud-detection guard,
     so any caller of this function already gets suspicious lines filtered out."""
@@ -114,34 +117,38 @@ def process_receipt_pipeline(raw_text: str) -> list[dict]:
 
 
 def process_with_ai(raw_text: str, provider: str, user_id: int | None = None) -> list[dict]:
-    """AI-assisted parser with entity-memory categorization. Falls back to the
-    rule-based parser's own results when the AI returns nothing usable."""
-    parsed_data = process_receipt_pipeline(raw_text)
-    ai_data = process_sms_with_ai(raw_text, provider)
+    """AI-assisted parser with entity-memory categorization.
 
-    if not parsed_data:
+    Prefer the AI result to avoid redundant local parsing, while still falling back
+    to the rule-based parser when the AI returns unusable data or fails.
+    """
+    if not raw_text or not raw_text.strip():
+        return []
+
+    try:
+        ai_data = process_sms_with_ai(raw_text, provider)
+    except Exception:
+        ai_data = []
+
+    parsed_data = []
+    if ai_data:
         codes = re.findall(r"^([A-Z0-9]{8,12})\b", raw_text, re.MULTILINE)
         lines = raw_text.splitlines()
+
         for index, item in enumerate(ai_data):
             if index >= len(codes):
                 continue
-            line = lines[index] if index < len(lines) else ""
 
-            # The AI model has no concept of fraud -- it just extracts fields
-            # from whatever text it's given. Without this check, a scam message
-            # that the rule-based parser correctly rejected (which is WHY we
-            # ended up in this AI-fallback branch at all) would sail straight
-            # through here unchecked. Apply the same guards as the rule-based path.
+            line = lines[index] if index < len(lines) else ""
             code = str(item.get("Transaction Code", codes[index]))
             code_has_digit = any(ch.isdigit() for ch in code)
             contains_url = bool(re.search(r"(https?://|www\.|bit\.ly|tinyurl\.com|t\.co/)", line, re.IGNORECASE))
             if not code_has_digit or contains_url or analyze_mpesa_fraud(line)["is_suspicious"]:
                 continue
-            
-            # --- EXTRACT PHONE NUMBER FOR AI FALLBACK ---
+
             phone_match = re.search(r"\b((?:07|01)\d{8})\b", line)
             phone = phone_match.group(1) if phone_match else ""
-            
+
             entity = str(item.get("Entity", "UNKNOWN")).strip()
             if phone:
                 entity = entity.replace(phone, "").strip()
@@ -151,6 +158,7 @@ def process_with_ai(raw_text: str, provider: str, user_id: int | None = None) ->
                 amount = float(str(item.get("Amount (KES)", item.get("Amount", 0))).replace(",", ""))
             except (TypeError, ValueError):
                 continue
+
             parsed_data.append({
                 "Transaction Code": item.get("Transaction Code", codes[index]),
                 "Date": item.get("Date", datetime.now().strftime("%Y-%m-%d")),
@@ -160,11 +168,18 @@ def process_with_ai(raw_text: str, provider: str, user_id: int | None = None) ->
                 "Category": item.get("Category", "Unknown"),
                 "Channel": item.get("Channel", infer_channel(line)),
             })
-    else:
-        for index, item in enumerate(ai_data):
-            if index < len(parsed_data) and item.get("Category"):
-                parsed_data[index]["Category"] = item["Category"]
 
+        if parsed_data:
+            memory = get_entity_memory(user_id)
+            for tx in parsed_data:
+                entity = tx["Entity"].strip().upper()
+                if entity in memory:
+                    tx["Category"] = memory[entity]
+                elif entity and tx.get("Category"):
+                    update_entity_memory(entity, tx["Category"], user_id)
+            return parsed_data
+
+    parsed_data = process_receipt_pipeline(raw_text)
     memory = get_entity_memory(user_id)
     for tx in parsed_data:
         entity = tx["Entity"].strip().upper()

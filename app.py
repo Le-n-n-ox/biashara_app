@@ -24,6 +24,26 @@ from components.metrics import render_financial_metrics
 from components.tabs import render_ledger_and_analytics
 
 load_dotenv()
+
+@st.cache_data
+def load_css() -> str:
+    try:
+        with open("assets/styles.css") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+
+@st.cache_data(ttl=15)
+def cached_transactions(user_id: int):
+    return load_transactions_from_db(user_id)
+
+@st.cache_data(ttl=30)
+def cached_process_receipt(raw_text: str, provider: str, user_id: int):
+    try:
+        return process_with_ai(raw_text, provider, user_id)
+    except Exception:
+        return process_receipt_pipeline(raw_text)
+
 MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "OLLAMA").strip().upper()
 AI_PROVIDERS = {
     "Ollama": "OLLAMA",
@@ -44,12 +64,9 @@ except ValueError:
     st.stop()
 
 # --- Load Custom CSS ---
-try:
-    with open("assets/styles.css") as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
-except FileNotFoundError:
-    pass
-
+css = load_css()
+if css:
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 apply_theme()  # must run AFTER styles.css so overrides win the cascade
 
@@ -94,53 +111,54 @@ with st.expander(f"📥 {tr('add_transactions')} · {tr('paste_hint')}", expande
     if "receipt_input" not in st.session_state:
         st.session_state.receipt_input = ""
 
-    voice_col, input_col = st.columns([1, 2], gap="large")
-    with voice_col:
-        st.markdown(f"#### 🎙️ {tr('voice_title')}")
-        st.caption(tr("voice_caption"))
-        st.info(tr("voice_help"), icon=":material/mic:")
-        audio_value = mic_recorder(
-            start_prompt=tr("record"),
-            stop_prompt=tr("stop_recording"),
-            just_once=True,
-            use_container_width=True,
-            format="wav",
-            key="receipt_voice_recording",
-        )
-        if audio_value:
-            audio_bytes = audio_value.get("bytes", b"")
-            if not audio_bytes:
-                st.warning(tr("voice_empty"))
-            else:
-                st.audio(audio_bytes, format="audio/wav", width="stretch")
-                with st.spinner(tr("transcribing")):
-                    try:
-                        transcript = transcribe_audio(
-                            audio_value,
-                            speech_language(),
-                        )
-                        st.session_state.receipt_input = transcript
-                        st.success(tr("voice_success"))
-                    except RuntimeError:
-                        st.warning(tr("voice_unavailable"))
-                    except ValueError:
-                        st.warning(tr("voice_empty"))
-                    except Exception:
-                        st.warning(tr("voice_error"))
+    with st.form("receipt_form", clear_on_submit=False):
+        voice_col, input_col = st.columns([1, 2], gap="large")
+        with voice_col:
+            st.markdown(f"#### 🎙️ {tr('voice_title')}")
+            st.caption(tr("voice_caption"))
+            st.info(tr("voice_help"), icon=":material/mic:")
+            audio_value = mic_recorder(
+                start_prompt=tr("record"),
+                stop_prompt=tr("stop_recording"),
+                just_once=True,
+                use_container_width=True,
+                format="wav",
+                key="receipt_voice_recording",
+            )
+            if audio_value:
+                audio_bytes = audio_value.get("bytes", b"")
+                if not audio_bytes:
+                    st.warning(tr("voice_empty"))
+                else:
+                    st.audio(audio_bytes, format="audio/wav", width="stretch")
+                    with st.spinner(tr("transcribing")):
+                        try:
+                            transcript = transcribe_audio(
+                                audio_value,
+                                speech_language(),
+                            )
+                            st.session_state.receipt_input = transcript
+                            st.success(tr("voice_success"))
+                        except RuntimeError:
+                            st.warning(tr("voice_unavailable"))
+                        except ValueError:
+                            st.warning(tr("voice_empty"))
+                        except Exception:
+                            st.warning(tr("voice_error"))
 
-    with input_col:
-        raw_sms = st.text_area(
-            tr("sms_input"),
-            height=180,
-            placeholder=tr("paste_hint"),
-            key="receipt_input",
-            label_visibility="collapsed",
-        )
+        with input_col:
+            raw_sms = st.text_area(
+                tr("sms_input"),
+                height=180,
+                placeholder=tr("paste_hint"),
+                key="receipt_input",
+                label_visibility="collapsed",
+            )
 
-    # Use columns to make the button look more balanced under the text area
-    _, btn_col, _ = st.columns([1, 2, 1])
-    with btn_col:
-        process_button = st.button(f"{tr('analyze')} 🚀", type="primary", width="stretch")
+        _, btn_col, _ = st.columns([1, 2, 1])
+        with btn_col:
+            process_button = st.form_submit_button(f"{tr('analyze')} 🚀", type="primary", use_container_width=True)
+
 if process_button:
     if not raw_sms.strip(): st.warning(f"⚠️ {tr('paste_first')}")
     else:
@@ -157,18 +175,20 @@ if process_button:
         else:
             safe_sms = "\n".join(safe_lines)
             try:
-                with st.spinner(f"Processing with {selected_label}..."): transactions = process_with_ai(safe_sms, selected_provider, current_user_id)
+                with st.spinner(f"Processing with {selected_label}..."):
+                    transactions = cached_process_receipt(safe_sms, selected_provider, current_user_id)
             except Exception as error:
                 transactions = process_receipt_pipeline(safe_sms)
                 st.warning(f"AI processing failed; used the local parser instead. Details: {error}")
 
             new_df = pd.DataFrame(transactions)
-            existing_df = load_transactions_from_db(current_user_id)
+            existing_df = cached_transactions(current_user_id)
             if not new_df.empty:
                 if not existing_df.empty: new_df = new_df[~new_df["Transaction Code"].isin(existing_df["Transaction Code"])]
                 new_df = new_df.drop_duplicates(subset=["Transaction Code"])
                 if not new_df.empty:
                     save_transactions_to_db(new_df, current_user_id)
+                    cached_transactions.clear()
                     st.success(f"Successfully registered {len(new_df)} new transaction(s).")
                     st.rerun()
 
@@ -177,6 +197,6 @@ if process_button:
 st.divider()
 
 # Fetch data and render the components
-df = load_transactions_from_db(current_user_id)
+df = cached_transactions(current_user_id)
 render_financial_metrics(df)
 render_ledger_and_analytics(df)

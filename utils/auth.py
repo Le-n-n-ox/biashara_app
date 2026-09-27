@@ -4,28 +4,64 @@ import hmac
 import os
 import re
 import streamlit as st
+import phonenumbers
+from phonenumbers import PhoneNumberFormat, NumberParseException
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Common countries for the dropdown -- name shown to user, ISO region code
+# phonenumbers uses internally.
+COUNTRIES = {
+    "Kenya (+254)": "KE",
+    "Uganda (+256)": "UG",
+    "Tanzania (+255)": "TZ",
+    "Rwanda (+250)": "RW",
+    "Nigeria (+234)": "NG",
+    "South Africa (+27)": "ZA",
+    "Ghana (+233)": "GH",
+    "Ethiopia (+251)": "ET",
+    "United States (+1)": "US",
+    "United Kingdom (+44)": "GB",
+    "India (+91)": "IN",
+}
+DEFAULT_COUNTRY_LABEL = "Kenya (+254)"
+
+
+@st.cache_resource
 def _get_conn():
-    # Try fetching from standard environment variables first
+    """Cached across reruns: psycopg2 connections aren't cheap to open
+    (TCP handshake + TLS + auth round-trip), so st.cache_resource keeps
+    one alive for the life of the app process instead of reconnecting
+    on every single query -- this is what was making login slow."""
     db_url = os.getenv("DATABASE_URL")
-    
-    # Fallback to Streamlit Secrets if environment is not ready
     if not db_url:
         try:
             db_url = st.secrets["DATABASE_URL"]
         except Exception:
             pass
-            
     if not db_url:
         raise ValueError("DATABASE_URL environment variable or secret is not set")
-        
-    return psycopg2.connect(db_url)
+    conn = psycopg2.connect(db_url)
+    conn.autocommit = False
+    return conn
+
+
+def _reconnect_if_needed(conn):
+    """psycopg2 connections can go stale (dropped by the DB host after
+    idle timeout, network blip, etc.). Cheap liveness check before use;
+    clears the cache and reconnects once if the connection is dead."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return conn
+    except psycopg2.OperationalError:
+        _get_conn.clear()
+        return _get_conn()
+
 
 def init_auth_db():
-    conn = _get_conn()
+    conn = _reconnect_if_needed(_get_conn())
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -42,46 +78,55 @@ def init_auth_db():
     """)
     conn.commit()
     cursor.close()
-    conn.close()
+
 
 def _hash_password(password: str, salt: bytes = None) -> tuple[str, str]:
     salt = salt or os.urandom(16)
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100_000)
     return hashed.hex(), salt.hex()
 
+
 def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
     salt_bytes = bytes.fromhex(stored_salt)
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt_bytes, 100_000)
     return hmac.compare_digest(hashed.hex(), stored_hash)
 
-def _clean_phone(phone: str) -> str:
-    digits = re.sub(r"\D", "", phone.strip())
-    if digits.startswith("0") and len(digits) == 10:
-        digits = "254" + digits[1:]
-    elif digits.startswith("7") or digits.startswith("1"):
-        if len(digits) == 9:
-            digits = "254" + digits
-    return digits
 
-def _is_valid_phone(phone: str) -> bool:
-    return bool(re.match(r"^254[71]\d{8}$", phone))
+def _normalize_phone(raw_phone: str, region: str) -> tuple[str | None, str | None]:
+    """Parses a phone number against the given country (ISO region code, e.g.
+    'KE', 'US') and returns (E.164 string, None) on success, or
+    (None, error message) on failure. E.164 = '+2547XXXXXXXX' format,
+    used as the canonical stored/compared form regardless of input style."""
+    try:
+        parsed = phonenumbers.parse(raw_phone.strip(), region)
+    except NumberParseException:
+        return None, "Enter a valid phone number for the selected country."
+
+    if not phonenumbers.is_valid_number(parsed):
+        return None, "This doesn't look like a valid number for the selected country."
+
+    return phonenumbers.format_number(parsed, PhoneNumberFormat.E164), None
+
 
 def _is_valid_email(email: str) -> bool:
     return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email.strip()))
 
-def register_user(name: str, email: str, phone: str, account_type: str,
-                   account_number: str, password: str) -> tuple[bool, str]:
+
+def register_user(name: str, email: str, phone_raw: str, country_region: str,
+                   account_type: str, account_number: str, password: str) -> tuple[bool, str]:
     name = name.strip()
     email = email.strip().lower()
-    phone = _clean_phone(phone)
     account_number = account_number.strip()
 
     if not name or len(name) < 2:
         return False, "Please enter your full name."
     if not _is_valid_email(email):
         return False, "Enter a valid email address."
-    if not _is_valid_phone(phone):
-        return False, "Enter a valid Safaricom number (e.g. 0712345678)."
+
+    phone, phone_error = _normalize_phone(phone_raw, country_region)
+    if phone_error:
+        return False, phone_error
+
     if account_type not in ("Till", "Paybill"):
         return False, "Select whether this is a Till or Paybill number."
     if not account_number or not account_number.isdigit():
@@ -91,8 +136,8 @@ def register_user(name: str, email: str, phone: str, account_type: str,
 
     password_hash, salt = _hash_password(password)
 
+    conn = _reconnect_if_needed(_get_conn())
     try:
-        conn = _get_conn()
         cursor = conn.cursor()
         cursor.execute(
             """INSERT INTO users (name, email, phone, account_type, account_number, password_hash, salt)
@@ -101,17 +146,18 @@ def register_user(name: str, email: str, phone: str, account_type: str,
         )
         conn.commit()
         cursor.close()
-        conn.close()
         return True, "Account created. You can now log in."
     except psycopg2.IntegrityError as e:
+        conn.rollback()
         err_msg = str(e)
         if "email" in err_msg:
             return False, "This email is already registered."
         return False, "This phone number is already registered."
 
+
 def authenticate_user(email: str, password: str) -> tuple[bool, str, dict | None]:
     email = email.strip().lower()
-    conn = _get_conn()
+    conn = _reconnect_if_needed(_get_conn())
     cursor = conn.cursor()
     cursor.execute(
         """SELECT id, name, email, phone, account_type, account_number, password_hash, salt
@@ -120,7 +166,6 @@ def authenticate_user(email: str, password: str) -> tuple[bool, str, dict | None
     )
     row = cursor.fetchone()
     cursor.close()
-    conn.close()
 
     if not row:
         return False, "No account found with that email.", None
@@ -133,6 +178,7 @@ def authenticate_user(email: str, password: str) -> tuple[bool, str, dict | None
         "id": user_id, "name": name, "email": email, "phone": phone,
         "account_type": account_type, "account_number": account_number,
     }
+
 
 def render_auth_gate():
     init_auth_db()
@@ -160,11 +206,31 @@ def render_auth_gate():
                 st.error(message)
 
     with register_tab:
+        # Country selector lives OUTSIDE the form so the phone placeholder/example
+        # can update live as the person picks their country -- st.form only
+        # re-renders its contents on submit, which would leave a stale example.
+        country_label = st.selectbox(
+            "Country",
+            list(COUNTRIES),
+            index=list(COUNTRIES).index(DEFAULT_COUNTRY_LABEL),
+            key="register_country",
+        )
+        country_region = COUNTRIES[country_label]
+
+        example_number = phonenumbers.example_number(country_region)
+        example_display = (
+            phonenumbers.format_number(example_number, PhoneNumberFormat.NATIONAL)
+            if example_number else "712345678"
+        )
+
         with st.form("register_form"):
             name = st.text_input("Full Name")
             email = st.text_input("Email", placeholder="you@business.com")
-            phone = st.text_input("Phone Number", placeholder="0712345678",
-                                   help="This links your business account to your M-Pesa number.")
+            phone_raw = st.text_input(
+                "Phone Number",
+                placeholder=example_display,
+                help=f"Enter your number as you would dial it within {country_label.split(' (')[0]}.",
+            )
             account_type = st.selectbox("Account Type", ["Till", "Paybill"])
             account_number = st.text_input(f"{account_type} Number", placeholder="e.g. 174379")
             password = st.text_input("Password", type="password")
@@ -175,7 +241,9 @@ def render_auth_gate():
             if password != confirm_password:
                 st.error("Passwords do not match.")
             else:
-                ok, message = register_user(name, email, phone, account_type, account_number, password)
+                ok, message = register_user(
+                    name, email, phone_raw, country_region, account_type, account_number, password
+                )
                 if ok:
                     st.success(message)
                 else:
@@ -183,6 +251,7 @@ def render_auth_gate():
 
     st.stop()
     return False
+
 
 def render_logout_button():
     user = st.session_state.get("user")

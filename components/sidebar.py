@@ -4,6 +4,10 @@ from utils.theme import render_theme_toggle
 from utils.auth import render_logout_button
 from localization.translations import tr
 
+@st.cache_data(ttl=30)
+def cached_memory(user_id: int):
+    return get_entity_memory(user_id)
+
 def render_sidebar(ai_providers: dict, default_provider_label: str, user_id: int):
     """Renders the configuration sidebar and returns the selected AI provider."""
     with st.sidebar:
@@ -26,7 +30,7 @@ def render_sidebar(ai_providers: dict, default_provider_label: str, user_id: int
 
         st.divider()
         st.markdown(f"### {tr('smart_memory')}")
-        memory_cache = get_entity_memory(user_id)
+        memory_cache = cached_memory(user_id)
         if memory_cache:
             st.caption(tr("memory_caption"))
             for entity, category in list(memory_cache.items())[:5]:
@@ -39,6 +43,7 @@ def render_sidebar(ai_providers: dict, default_provider_label: str, user_id: int
         st.divider()
         if st.button(tr("wipe_ledger"), type="secondary", width="stretch"):
             clear_db(user_id)
+            st.cache_data.clear()
             st.rerun()
 
         return selected_label, selected_provider

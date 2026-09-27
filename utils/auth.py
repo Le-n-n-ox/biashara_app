@@ -34,6 +34,24 @@ def init_auth_db():
         """)
         conn.commit()
 
+        # Automatic schema migration for existing user tables
+        cursor = conn.cursor()
+        existing_columns = [row[1] for row in cursor.execute('PRAGMA table_info(users)').fetchall()]
+
+        columns_to_add = {
+            "email": "TEXT DEFAULT ''",
+            "phone": "TEXT DEFAULT ''",
+            "account_type": "TEXT DEFAULT ''",
+            "account_number": "TEXT DEFAULT ''",
+            "password_hash": "TEXT DEFAULT ''",
+            "salt": "TEXT DEFAULT ''"
+        }
+
+        for col_name, col_type in columns_to_add.items():
+            if col_name not in existing_columns:
+                cursor.execute(f'ALTER TABLE users ADD COLUMN {col_name} {col_type}')
+        
+        conn.commit()
 
 # ---------- Password hashing (PBKDF2, no extra dependency) ----------
 def _hash_password(password: str, salt: bytes = None) -> tuple[str, str]:

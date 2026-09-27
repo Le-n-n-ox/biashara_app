@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from psycopg2.extras import execute_values
 
 import pandas as pd
 
@@ -76,18 +77,29 @@ def save_transactions_to_db(df: pd.DataFrame, user_id: int | None = None) -> Non
     if df.empty:
         return
     init_db()
+    
     records = df.copy()
     records["user_id"] = user_id
     columns = [*TRANSACTION_COLUMNS, "user_id"]
     records = records.reindex(columns=columns)
-    placeholders = ", ".join("?" for _ in columns)
+    
     quoted_columns = ", ".join(f'"{column}"' for column in columns)
-    with _get_conn() as conn:
-        conn.executemany(
-            f"INSERT OR IGNORE INTO transactions ({quoted_columns}) VALUES ({placeholders})",
-            [tuple(row) for row in records.itertuples(index=False, name=None)],
-        )
-
+    values = [tuple(row) for row in records.itertuples(index=False, name=None)]
+    
+    conn = _get_conn()
+    cursor = conn.cursor()
+    
+    # PostgreSQL syntax: Uses %s placeholder for execute_values and ON CONFLICT for deduplication
+    insert_query = f"""
+        INSERT INTO transactions ({quoted_columns}) 
+        VALUES %s 
+        ON CONFLICT ("Transaction Code", "user_id") DO NOTHING;
+    """
+    
+    execute_values(cursor, insert_query, values)
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 def load_transactions_from_db(user_id: int | None = None) -> pd.DataFrame:
     init_db()

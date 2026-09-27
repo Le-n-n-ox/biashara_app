@@ -18,29 +18,52 @@ CATEGORY_PALETTE = [
 ]
 
 
+def _theme_colors():
+    is_dark = st.session_state.get("theme") == "dark"
+    if is_dark:
+        return {
+            "ink": "#E9EDF0",
+            "soft": "#9AA7B0",
+            "border": "#2C343D",
+            "surface": "#1B222A",
+            "green": "#3FB97E",
+            "terracotta": "#E0725A",
+        }
+    return {
+        "ink": "#16283A",
+        "soft": "#5B6B78",
+        "border": "#E4E1D8",
+        "surface": "#FFFFFF",
+        "green": "#1C8A5D",
+        "terracotta": "#B3402A",
+    }
+
+
 def _base_layout(height=340, showlegend=False):
     """Shared Plotly layout: transparent background so it follows the app
     theme, ink-toned text, minimal chrome."""
+    theme_colors = _theme_colors()
     return dict(
         height=height,
         margin=dict(l=10, r=10, t=10, b=10),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, sans-serif", color=INK, size=13),
+        font=dict(family="Inter, sans-serif", color=theme_colors["ink"], size=13),
         showlegend=showlegend,
         hoverlabel=dict(
-            bgcolor="white",
+            bgcolor=theme_colors["surface"],
             font_size=13,
             font_family="Inter, sans-serif",
-            bordercolor=BORDER,
+            bordercolor=theme_colors["border"],
         ),
-        xaxis=dict(showgrid=False, showline=True, linecolor=BORDER, zeroline=False),
-        yaxis=dict(showgrid=True, gridcolor=BORDER, zeroline=False),
+        xaxis=dict(showgrid=False, showline=True, linecolor=theme_colors["border"], zeroline=False),
+        yaxis=dict(showgrid=True, gridcolor=theme_colors["border"], zeroline=False),
     )
 
 
 def render_ledger_and_analytics(df: pd.DataFrame):
     """Renders the ledger table and analytics charts in tabs."""
+    theme_colors = _theme_colors()
     ledger_tab, analytics_tab = st.tabs(["Daily Ledger", "Analytics Dashboard"])
 
     with ledger_tab:
@@ -58,7 +81,7 @@ def render_ledger_and_analytics(df: pd.DataFrame):
             )
             display_df = display_df[display_df["Channel"].isin(selected_channels)]
 
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_df, width="stretch", hide_index=True)
             st.download_button(
                 "Export to CSV",
                 data=display_df.to_csv(index=False).encode("utf-8"),
@@ -83,27 +106,27 @@ def render_ledger_and_analytics(df: pd.DataFrame):
 
             chart_col, table_col = st.columns([2, 1])
             with chart_col:
-                colors = (CATEGORY_PALETTE * (len(category_summary) // len(CATEGORY_PALETTE) + 1))[:len(category_summary)]
+                category_colors = (CATEGORY_PALETTE * (len(category_summary) // len(CATEGORY_PALETTE) + 1))[:len(category_summary)]
                 fig = go.Figure(go.Bar(
                     x=category_summary.values,
                     y=category_summary.index,
                     orientation="h",
-                    marker=dict(color=colors, line=dict(width=0)),
+                    marker=dict(color=category_colors, line=dict(width=0)),
                     text=[f"KES {v:,.0f}" for v in category_summary.values],
                     textposition="outside",
-                    textfont=dict(color=INK, size=12),
+                    textfont=dict(color=theme_colors["ink"], size=12),
                     hovertemplate="<b>%{y}</b><br>KES %{x:,.2f}<extra></extra>",
                 ))
                 layout = _base_layout(height=max(260, 42 * len(category_summary)))
                 layout["xaxis"]["showgrid"] = True
-                layout["xaxis"]["gridcolor"] = BORDER
+                layout["xaxis"]["gridcolor"] = theme_colors["border"]
                 layout["yaxis"]["showgrid"] = False
                 fig.update_layout(**layout)
-                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
             with table_col:
                 st.dataframe(
                     category_summary.sort_values(ascending=False).rename("Amount (KES)"),
-                    use_container_width=True,
+                    width="stretch",
                 )
         else:
             st.info("No expenses recorded yet.")
@@ -119,20 +142,20 @@ def render_ledger_and_analytics(df: pd.DataFrame):
         fig = go.Figure(go.Bar(
             x=["Income", "Expense"],
             y=[income_val, expense_val],
-            marker=dict(color=[GREEN, TERRACOTTA], line=dict(width=0)),
+            marker=dict(color=[_theme_colors()["green"], _theme_colors()["terracotta"]], line=dict(width=0)),
             width=0.5,
             text=[f"KES {income_val:,.0f}", f"KES {expense_val:,.0f}"],
             textposition="outside",
-            textfont=dict(color=INK, size=13),
+            textfont=dict(color=theme_colors["ink"], size=13),
             hovertemplate="<b>%{x}</b><br>KES %{y:,.2f}<extra></extra>",
         ))
         layout = _base_layout(height=300)
         layout["xaxis"]["showgrid"] = False
         fig.update_layout(**layout)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
 
         net = income_val - expense_val
-        net_color = GREEN if net >= 0 else TERRACOTTA
+        net_color = theme_colors["green"] if net >= 0 else theme_colors["terracotta"]
         st.markdown(
             f"<p style='color:{net_color}; font-weight:600; margin-top:-10px;'>"
             f"Net position: KES {net:,.2f}</p>",
@@ -165,15 +188,15 @@ def render_ledger_and_analytics(df: pd.DataFrame):
                 ),
                 text=[f"KES {v:,.0f}" for v in channel_summary.values],
                 textposition="outside",
-                textfont=dict(color=INK, size=12),
+                textfont=dict(color=theme_colors["ink"], size=12),
                 hovertemplate="<b>%{y}</b><br>KES %{x:,.2f}<extra></extra>",
             ))
             layout = _base_layout(height=max(220, 50 * len(channel_summary)))
             layout["yaxis"]["showgrid"] = False
             fig.update_layout(**layout)
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
         with channel_table_col:
             st.dataframe(
                 channel_summary.sort_values(ascending=False).rename("Amount (KES)"),
-                use_container_width=True,
+                width="stretch",
             )

@@ -16,6 +16,8 @@
     --green-soft: #E8F3EC;
     --terracotta: #B3402A;
     --terracotta-soft: #F7EAE6;
+    --button-text: #FFFFFF;
+    --control-text: #16283A;
     --shadow: 0 1px 2px rgba(22, 40, 58, 0.04);
 }
 
@@ -25,6 +27,11 @@
     color: var(--ink);
     transition: background-color .2s ease, color .2s ease;
 }
+
+/* The hosted-app deploy affordance is not part of this local product UI. */
+div[data-testid="stDeployButton"] {
+    display: none !important;
+}
 html, body, [class*="css"] {
     font-family: 'Inter', sans-serif;
     color: var(--ink);
@@ -32,16 +39,69 @@ html, body, [class*="css"] {
 p, span, label, .stMarkdown { color: var(--ink); }
 small, .stCaption { color: var(--ink-soft) !important; }
 hr { border-color: var(--border) !important; }
+input, textarea, [data-baseweb="select"] * { color: var(--control-text) !important; }
 
-/* ---------- Header / title ---------- */
-h1 {
+/* ---------- Brand masthead ---------- */
+.brand-masthead {
+    padding: 0.35rem 0 1.4rem;
+}
+.brand-kicker {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    color: var(--green) !important;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+}
+.brand-mark {
+    display: inline-grid;
+    place-items: center;
+    width: 1.45rem;
+    height: 1.45rem;
+    border-radius: 5px;
+    background: var(--green);
+    color: var(--button-text) !important;
+    font-family: 'Fraunces', serif;
+    font-size: 0.9rem;
+    letter-spacing: 0;
+}
+.brand-heading-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 0.3rem;
+}
+.brand-heading-row h1 {
+    margin: 0;
     font-family: 'Fraunces', serif !important;
     font-weight: 600 !important;
     font-size: 2.4rem !important;
     color: var(--ink) !important;
     letter-spacing: -0.01em;
 }
-h1 + div p {
+.ledger-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    color: var(--ink-soft) !important;
+    background: var(--surface);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+.status-dot {
+    width: 0.42rem;
+    height: 0.42rem;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 3px var(--green-soft);
+}
+.brand-subtitle {
+    margin: 0.25rem 0 0;
     color: var(--ink-soft) !important;
     font-size: 1.02rem;
 }
@@ -88,7 +148,7 @@ section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {
 /* ---------- Buttons ---------- */
 div.stButton > button[kind="primary"] {
     background-color: var(--green);
-    color: white;
+    color: var(--button-text);
     border-radius: 8px;
     padding: 0.55rem 1rem;
     font-weight: 600;
@@ -97,18 +157,49 @@ div.stButton > button[kind="primary"] {
     transition: background-color 0.15s ease;
 }
 div.stButton > button[kind="primary"]:hover {
-    background-color: #15694a;
-    color: white;
+    background-color: color-mix(in srgb, var(--green) 82%, var(--ink));
+    color: var(--button-text);
 }
 div.stButton > button[kind="secondary"] {
     border-radius: 8px;
     border: 1px solid var(--border);
     background-color: var(--surface);
-    color: var(--terracotta);
+    color: var(--ink);
     font-weight: 500;
 }
 div.stButton > button[kind="secondary"]:hover {
-    border-color: var(--terracotta);
+    border-color: var(--green);
+    color: var(--green);
+}
+
+div.stButton > button:focus-visible,
+div[data-baseweb="select"] > div:focus-within,
+.stTextArea textarea:focus-visible {
+    outline: 2px solid var(--green) !important;
+    outline-offset: 2px;
+}
+
+/* Download actions need explicit theme colors because Streamlit's native
+   download widget can retain a light background in dark mode. */
+div[data-testid="stDownloadButton"] button,
+.stDownloadButton button {
+    background-color: var(--surface) !important;
+    color: var(--ink) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px;
+    font-weight: 600;
+    transition: border-color .15s ease, background-color .15s ease, color .15s ease;
+}
+div[data-testid="stDownloadButton"] button:hover,
+.stDownloadButton button:hover {
+    background-color: var(--green-soft) !important;
+    border-color: var(--green) !important;
+    color: var(--ink) !important;
+}
+div[data-testid="stDownloadButton"] button:focus-visible,
+.stDownloadButton button:focus-visible {
+    outline: 2px solid var(--green) !important;
+    outline-offset: 2px;
 }
 
 /* ---------- Text area (SMS input) ---------- */
@@ -116,7 +207,7 @@ div.stButton > button[kind="secondary"]:hover {
     border-radius: 8px;
     border: 1px solid var(--border);
     background-color: var(--surface);
-    color: var(--ink);
+    color: var(--control-text);
     font-family: 'Inter', sans-serif;
 }
 .stTextArea textarea:focus {
@@ -129,10 +220,26 @@ div[data-testid="stExpander"] {
     border: 1px solid var(--border);
     border-radius: 10px;
     background-color: var(--surface);
+    box-shadow: var(--shadow);
 }
 div[data-testid="stExpander"] summary {
     font-weight: 600;
     padding: .6rem 1rem;
+    color: var(--ink) !important;
+    background-color: var(--surface) !important;
+}
+div[data-testid="stExpander"] summary:hover {
+    background-color: var(--green-soft) !important;
+}
+div[data-testid="stExpander"] summary p,
+div[data-testid="stExpander"] summary span,
+div[data-testid="stExpander"] summary svg {
+    color: var(--ink) !important;
+    fill: var(--ink) !important;
+}
+div[data-testid="stExpander"] details,
+div[data-testid="stExpander"] > div {
+    background-color: var(--surface) !important;
 }
 
 /* ---------- Alerts ---------- */
@@ -146,6 +253,18 @@ div[data-testid="stAlertContentWarning"], .stWarning {
     border-left: 4px solid var(--terracotta) !important;
 }
 div[data-testid="stAlert"] p { color: var(--ink) !important; }
+
+/* Keep native controls readable when the app is switched to dark mode. */
+div[data-baseweb="select"] > div,
+div[data-baseweb="popover"] > div,
+div[data-testid="stAudioInput"] {
+    background-color: var(--surface) !important;
+    border-color: var(--border) !important;
+}
+
+div[data-testid="stAudioInput"] button {
+    color: var(--ink) !important;
+}
 
 /* ---------- Ledger table ---------- */
 div[data-testid="stDataFrame"] {
@@ -175,3 +294,9 @@ div[data-testid="stSpinner"] p { color: var(--ink-soft); }
 /* ---------- Scrollbar ---------- */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+@media (max-width: 700px) {
+    .brand-heading-row h1 { font-size: 2rem !important; }
+    div[data-testid="stMetric"] { padding: 14px 15px; }
+    div[data-testid="stExpander"] summary { padding: .55rem .7rem; }
+}

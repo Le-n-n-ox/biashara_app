@@ -113,7 +113,7 @@ def process_receipt_pipeline(raw_text: str) -> list[dict]:
     return parsed_data
 
 
-def process_with_ai(raw_text: str, provider: str) -> list[dict]:
+def process_with_ai(raw_text: str, provider: str, user_id: int | None = None) -> list[dict]:
     """AI-assisted parser with entity-memory categorization. Falls back to the
     rule-based parser's own results when the AI returns nothing usable."""
     parsed_data = process_receipt_pipeline(raw_text)
@@ -165,11 +165,11 @@ def process_with_ai(raw_text: str, provider: str) -> list[dict]:
             if index < len(parsed_data) and item.get("Category"):
                 parsed_data[index]["Category"] = item["Category"]
 
-    memory = get_entity_memory()
+    memory = get_entity_memory(user_id)
     for tx in parsed_data:
         entity = tx["Entity"].strip().upper()
         if entity in memory:
             tx["Category"] = memory[entity]
         elif entity and tx.get("Category"):
-            update_entity_memory(entity, tx["Category"])
+            update_entity_memory(entity, tx["Category"], user_id)
     return parsed_data

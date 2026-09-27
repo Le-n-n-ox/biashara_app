@@ -10,7 +10,7 @@ import os
 import re
 import streamlit as st
 
-DB_PATH = os.getenv("DB_PATH", "biashara.db")  # adjust to match database.py's actual path
+DB_PATH = os.getenv("DB_PATH", "ledger.db")  # must match database.py's DB_PATH exactly # adjust to match database.py's actual path
 
 
 def _get_conn():

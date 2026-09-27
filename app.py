@@ -45,21 +45,22 @@ apply_theme()  # must run AFTER styles.css so overrides win the cascade
 render_auth_gate()  # blocks here (st.stop) until the user logs in or registers
 
 # --- Main App Execution (only reached once authenticated) ---
+current_user_id = st.session_state.user["id"]
 
-selected_label, selected_provider = render_sidebar(AI_PROVIDERS, DEFAULT_PROVIDER_LABEL)
+selected_label, selected_provider = render_sidebar(AI_PROVIDERS, DEFAULT_PROVIDER_LABEL, current_user_id)
 
-st.title("📘 Biashara Bookkeeper")
+st.title("Biashara Bookkeeper")
 st.markdown("Automated M-Pesa intelligence for the modern Kenyan business.")
 
-with st.expander("📥 Add New Transactions (Paste M-Pesa SMS)", expanded=True):
+with st.expander("Add New Transactions (Paste M-Pesa SMS)", expanded=True):
     raw_sms = st.text_area("M-Pesa SMS Input", height=180, placeholder="Paste your raw messages here...", label_visibility="collapsed")
-    
+
     # Use columns to make the button look more balanced under the text area
     _, btn_col, _ = st.columns([1, 2, 1])
     with btn_col:
-        process_button = st.button("Analyze Receipts 🚀", type="primary", use_container_width=True)
+        process_button = st.button("Analyze Receipts", type="primary", use_container_width=True)
 if process_button:
-    if not raw_sms.strip(): st.warning("⚠️ Please paste at least one SMS receipt first.")
+    if not raw_sms.strip(): st.warning("Please paste at least one SMS receipt first.")
     else:
         receipt_lines = [line for line in raw_sms.splitlines() if re.match(r"^[A-Z0-9]{8,12}\b", line.strip())]
         checks = [analyze_mpesa_fraud(line) for line in receipt_lines]
@@ -68,32 +69,32 @@ if process_button:
 
         if blocked_checks:
             st.error(blocked_checks[0]["reason"])
-            st.warning(f"🛡️ Security Block: Prevented {len(blocked_checks)} suspicious receipt(s).")
+            st.warning(f"Security Block: Prevented {len(blocked_checks)} suspicious receipt(s).")
 
         if not safe_lines: st.info("No safe receipts were available to add to the ledger.")
         else:
             safe_sms = "\n".join(safe_lines)
             try:
-                with st.spinner(f"Processing with {selected_label}..."): transactions = process_with_ai(safe_sms, selected_provider)
+                with st.spinner(f"Processing with {selected_label}..."): transactions = process_with_ai(safe_sms, selected_provider, current_user_id)
             except Exception as error:
                 transactions = process_receipt_pipeline(safe_sms)
                 st.warning(f"AI processing failed; used the local parser instead. Details: {error}")
 
             new_df = pd.DataFrame(transactions)
-            existing_df = load_transactions_from_db()
+            existing_df = load_transactions_from_db(current_user_id)
             if not new_df.empty:
                 if not existing_df.empty: new_df = new_df[~new_df["Transaction Code"].isin(existing_df["Transaction Code"])]
                 new_df = new_df.drop_duplicates(subset=["Transaction Code"])
                 if not new_df.empty:
-                    save_transactions_to_db(new_df)
-                    st.success(f"✅ Successfully registered {len(new_df)} new transaction(s).")
+                    save_transactions_to_db(new_df, current_user_id)
+                    st.success(f"Successfully registered {len(new_df)} new transaction(s).")
                     st.rerun()
 
-            if new_df.empty: st.info("ℹ️ No new receipts found.")
+            if new_df.empty: st.info("No new receipts found.")
 
 st.divider()
 
 # Fetch data and render the components
-df = load_transactions_from_db()
+df = load_transactions_from_db(current_user_id)
 render_financial_metrics(df)
 render_ledger_and_analytics(df)

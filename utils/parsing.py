@@ -117,11 +117,7 @@ def process_receipt_pipeline(raw_text: str) -> list[dict]:
 
 
 def process_with_ai(raw_text: str, provider: str, user_id: int | None = None) -> list[dict]:
-    """AI-assisted parser with entity-memory categorization.
-
-    Prefer the AI result to avoid redundant local parsing, while still falling back
-    to the rule-based parser when the AI returns unusable data or fails.
-    """
+    """Prefer AI results, falling back to the rule-based parser when needed."""
     if not raw_text or not raw_text.strip():
         return []
 

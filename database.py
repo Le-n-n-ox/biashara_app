@@ -23,39 +23,54 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def init_db() -> None:
-    with _get_conn() as conn:
-        conn.execute(
-            '''CREATE TABLE IF NOT EXISTS transactions (
-                "Transaction Code" TEXT NOT NULL,
-                "Date" TEXT,
-                "Entity" TEXT,
-                "Type" TEXT,
-                "Amount (KES)" REAL,
-                "Category" TEXT,
-                "Channel" TEXT,
-                "user_id" INTEGER,
-                PRIMARY KEY ("Transaction Code", "user_id")
-            )'''
-        )
-        conn.execute(
-            '''CREATE TABLE IF NOT EXISTS entity_memory (
-                entity TEXT NOT NULL,
-                category TEXT,
-                user_id INTEGER,
-                PRIMARY KEY (entity, user_id)
-            )'''
-        )
+    conn = _get_conn()
+    cursor = conn.cursor()
+    
+    # Create tables with composite keys for multi-user support
+    cursor.execute(
+        '''CREATE TABLE IF NOT EXISTS transactions (
+            "Transaction Code" TEXT NOT NULL,
+            "Date" TEXT,
+            "Entity" TEXT,
+            "Type" TEXT,
+            "Amount (KES)" REAL,
+            "Category" TEXT,
+            "Channel" TEXT,
+            "user_id" INTEGER,
+            PRIMARY KEY ("Transaction Code", "user_id")
+        )'''
+    )
+    cursor.execute(
+        '''CREATE TABLE IF NOT EXISTS entity_memory (
+            entity TEXT NOT NULL,
+            category TEXT,
+            user_id INTEGER,
+            PRIMARY KEY (entity, user_id)
+        )'''
+    )
+    conn.commit()
 
-        transaction_columns = {row[1] for row in conn.execute("PRAGMA table_info(transactions)")}
-        if "Channel" not in transaction_columns:
-            conn.execute('ALTER TABLE transactions ADD COLUMN "Channel" TEXT')
-        if "user_id" not in transaction_columns:
-            conn.execute('ALTER TABLE transactions ADD COLUMN "user_id" INTEGER')
+    # PostgreSQL schema inspection for 'transactions'
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='transactions';")
+    transaction_columns = {row[0] for row in cursor.fetchall()}
+    
+    if "Channel" not in transaction_columns:
+        cursor.execute('ALTER TABLE transactions ADD COLUMN "Channel" TEXT')
+        conn.commit()
+    if "user_id" not in transaction_columns:
+        cursor.execute('ALTER TABLE transactions ADD COLUMN "user_id" INTEGER')
+        conn.commit()
 
-        memory_columns = {row[1] for row in conn.execute("PRAGMA table_info(entity_memory)")}
-        if "user_id" not in memory_columns:
-            conn.execute('ALTER TABLE entity_memory ADD COLUMN "user_id" INTEGER')
+    # PostgreSQL schema inspection for 'entity_memory'
+    cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name='entity_memory';")
+    memory_columns = {row[0] for row in cursor.fetchall()}
+    
+    if "user_id" not in memory_columns:
+        cursor.execute('ALTER TABLE entity_memory ADD COLUMN "user_id" INTEGER')
+        conn.commit()
 
+    cursor.close()
+    conn.close()
 
 def save_transactions_to_db(df: pd.DataFrame, user_id: int | None = None) -> None:
     if df.empty:

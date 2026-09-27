@@ -95,11 +95,18 @@ You MUST return valid JSON ONLY. Use this exact schema:
 
         if provider == "OLLAMA":
             response = ollama.chat(
-                model=os.getenv("OLLAMA_MODEL", "llama3.2"),
+                model=os.getenv("OLLAMA_MODEL", "llama3.2:1b"),
                 messages=[{"role": "user", "content": prompt}],
                 format="json"
             )
-            content = response.message.content
+            # ollama's Python client has changed response shape across versions --
+            # some return a plain dict, others a typed object with attribute
+            # access. Handle both rather than assuming one, since ai_router.py's
+            # working code implies this project's installed version uses dicts.
+            if isinstance(response, dict):
+                content = response["message"]["content"]
+            else:
+                content = response.message.content
 
         elif provider == "GEMINI":
             client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
@@ -109,14 +116,29 @@ You MUST return valid JSON ONLY. Use this exact schema:
             )
             content = response.text
 
-        else:
+        elif provider == "NVIDIA":
+            # Must point at NVIDIA's endpoint with NVIDIA_API_KEY, exactly like
+            # ai_router.py's process_sms_with_ai does -- otherwise this silently
+            # falls through to the real OpenAI API with a key that doesn't exist.
+            client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=os.getenv("NVIDIA_API_KEY"))
+            response = client.chat.completions.create(
+                model="meta/llama3-70b-instruct",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1,
+            )
+            content = response.choices[0].message.content
+
+        elif provider == "OPENAI":
             client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 response_format={"type": "json_object"},
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
             )
             content = response.choices[0].message.content
+
+        else:
+            raise ValueError(f"Invalid provider: {provider}")
 
         # Clean markdown wrappers if model returns ```json ... ```
         content = content.strip()

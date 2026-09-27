@@ -1,5 +1,6 @@
 import os
 import re
+import concurrent.futures
 import pandas as pd
 from fastapi import FastAPI, Form, Response
 from twilio.twiml.messaging_response import MessagingResponse
@@ -13,6 +14,7 @@ from database import save_transactions_to_db, load_transactions_from_db, update_
 
 load_dotenv()
 MODEL_PROVIDER = os.getenv("MODEL_PROVIDER", "OLLAMA").strip().upper()
+AI_QA_TIMEOUT_SECONDS = 8  # keep comfortably under Twilio's ~15s webhook timeout
 
 app = FastAPI()
 
@@ -57,12 +59,28 @@ def looks_like_phishing(text: str) -> bool:
 def handle_ai_query(text: str, sender: str) -> str:
     df = load_transactions_from_db()
     history = AI_CONTEXT.get(sender, [])
-    result = ask_ledger_ai(
-        user_message=text,
-        ledger_df=df,
-        provider=MODEL_PROVIDER,
-        conversation_history=history,
-    )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            ask_ledger_ai,
+            user_message=text,
+            ledger_df=df,
+            provider=MODEL_PROVIDER,
+            conversation_history=history,
+        )
+        try:
+            result = future.result(timeout=AI_QA_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            return (
+                "That's taking longer than expected to look up — the AI provider "
+                "might be slow or unreachable right now. Try again in a moment."
+            )
+        except Exception:
+            return (
+                "Something went wrong answering that. Try rephrasing, or ask "
+                "again in a moment."
+            )
+
     response = result.get("response", "Sorry, I couldn't process that request.")
     history.append({"user": text, "assistant": response})
     AI_CONTEXT[sender] = history[-10:]

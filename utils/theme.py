@@ -15,11 +15,15 @@ _DARK_VARS = """
 """
 
 
+def _ensure_theme_initialized():
+    if "theme" not in st.session_state:
+        st.session_state.theme = "system"
+
+
 def apply_theme():
     """Call this AFTER styles.css is loaded, so the override wins the
     cascade. No JS involved — pure Python-side conditional CSS."""
-    if "theme" not in st.session_state:
-        st.session_state.theme = "system"
+    _ensure_theme_initialized()
 
     mode = st.session_state.theme
 
@@ -35,6 +39,12 @@ def apply_theme():
 
 
 def render_theme_toggle():
+    # Same guard as apply_theme() -- this function must not assume apply_theme()
+    # ran first. Previously this read st.session_state.theme directly, which
+    # crashed with a KeyError whenever the sidebar rendered before anything
+    # had initialized it.
+    _ensure_theme_initialized()
+
     st.markdown("##### Appearance")
     cols = st.columns(3)
     opts = {"system": "System", "light": "Light", "dark": "Dark"}

@@ -45,7 +45,16 @@ def process_sms_with_ai(sms_input: str, model_provider: str) -> list[dict]:
             temperature=0.1
         )
         raw_output = response.choices[0].message.content
-        
+
+    elif model_provider == "OPENAI":
+        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.1
+        )
+        raw_output = response.choices[0].message.content
+
     elif model_provider == "GEMINI":
         client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         response = client.models.generate_content(model='gemini-3.8-flash', contents=prompt)

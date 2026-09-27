@@ -70,8 +70,12 @@ if css:
 
 apply_theme()  # must run AFTER styles.css so overrides win the cascade
 
-# Keep one language control visible before and after login so every screen
-# reads from the same session value.
+render_auth_gate()  # blocks here (st.stop) until the user logs in or registers
+
+# --- Main App Execution (only reached once authenticated) ---
+current_user_id = st.session_state.user["id"]
+
+# Language is a dashboard setting; keep authentication screens focused.
 _, language_col = st.columns([5, 1])
 with language_col:
     language_label = st.selectbox(
@@ -85,11 +89,6 @@ with language_col:
     if selected_language != st.session_state.get("language", "en"):
         st.session_state.language = selected_language
         st.rerun()
-
-render_auth_gate()  # blocks here (st.stop) until the user logs in or registers
-
-# --- Main App Execution (only reached once authenticated) ---
-current_user_id = st.session_state.user["id"]
 
 selected_label, selected_provider = render_sidebar(AI_PROVIDERS, DEFAULT_PROVIDER_LABEL, current_user_id)
 

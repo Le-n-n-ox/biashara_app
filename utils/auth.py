@@ -80,7 +80,7 @@ def init_auth_db():
     cursor.close()
 
 
-def _hash_password(password: str, salt: bytes = None) -> tuple[str, str]:
+def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
     salt = salt or os.urandom(16)
     hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100_000)
     return hashed.hex(), salt.hex()
@@ -194,8 +194,13 @@ def render_auth_gate():
     with login_tab:
         with st.form("login_form"):
             email = st.text_input("Email", placeholder="you@business.com")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Log In", type="primary", use_container_width=True)
+            show_password = st.checkbox("Show password", key="login_show_password")
+            password = st.text_input(
+                "Password",
+                type="default" if show_password else "password",
+                placeholder="Enter your password",
+            )
+            submitted = st.form_submit_button("Log In", type="primary", width="stretch")
 
         if submitted:
             ok, message, user = authenticate_user(email, password)
@@ -235,7 +240,7 @@ def render_auth_gate():
             account_number = st.text_input(f"{account_type} Number", placeholder="e.g. 174379")
             password = st.text_input("Password", type="password")
             confirm_password = st.text_input("Confirm Password", type="password")
-            submitted = st.form_submit_button("Create Account", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("Create Account", type="primary", width="stretch")
 
         if submitted:
             if password != confirm_password:
@@ -259,6 +264,6 @@ def render_logout_button():
         return
     st.caption(f"Signed in as **{user['name']}**")
     st.caption(f"{user['account_type']}: {user['account_number']}")
-    if st.button("Log Out", use_container_width=True):
+    if st.button("Log Out", width="stretch"):
         del st.session_state["user"]
         st.rerun()

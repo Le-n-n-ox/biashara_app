@@ -90,6 +90,30 @@ div[data-testid="stNumberInput"] label {
   color: var(--ink) !important;
 }
 
+/* Streamlit's BaseWeb text inputs need explicit foreground and opacity rules;
+   otherwise entered email text and password bullets can inherit a faded color. */
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextInput"] input[type="text"],
+div[data-testid="stTextInput"] input[type="password"] {
+    color: var(--control-text) !important;
+    -webkit-text-fill-color: var(--control-text) !important;
+    opacity: 1 !important;
+    background-color: var(--surface) !important;
+    caret-color: var(--green) !important;
+    font-size: 1rem !important;
+    font-weight: 500 !important;
+}
+div[data-testid="stTextInput"] input::placeholder {
+    color: var(--ink-soft) !important;
+    -webkit-text-fill-color: var(--ink-soft) !important;
+    opacity: 1 !important;
+}
+div[data-testid="stTextInput"] > label,
+div[data-testid="stTextInput"] > label p {
+    color: var(--ink) !important;
+    font-weight: 600 !important;
+}
+
 /* ---------- Brand masthead ---------- */
 .brand-masthead {
   padding: 0.35rem 0 1.4rem;

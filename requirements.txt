@@ -13,5 +13,6 @@ twilio
 SpeechRecognition
 streamlit-mic-recorder
 phonenumbers
+psycopg2-binary
 # Optional: redis
 # Optional: supabase

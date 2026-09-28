@@ -139,7 +139,7 @@ You MUST return valid JSON ONLY. Use this exact schema:
                 api_key=os.getenv("NVIDIA_API_KEY"),
             )
             response = client.chat.completions.create(
-                model=os.getenv("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct"),
+                model=os.getenv("NVIDIA_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b"),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
             )

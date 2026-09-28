@@ -183,6 +183,7 @@ def process_with_ai(raw_text: str, provider: str, user_id: int | None = None) ->
                     update_entity_memory(entity, tx["Category"], user_id)
             return parsed_data
 
+
     parsed_data = process_receipt_pipeline(raw_text)
     memory = get_entity_memory(user_id)
     for tx in parsed_data:

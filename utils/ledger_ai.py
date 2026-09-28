@@ -10,7 +10,8 @@ def ask_ledger_ai(
     user_message: str,
     ledger_df: pd.DataFrame,
     provider: str = "OLLAMA",
-    conversation_history=None
+    conversation_history=None,
+    max_context_rows: int = 40,
 ):
 
     if ledger_df.empty:
@@ -24,11 +25,22 @@ def ask_ledger_ai(
     if conversation_history is None:
         conversation_history = []
 
-    # Convert last 500 records into structured JSON for AI reasoning
+    # Pre-compute totals separately so aggregate questions ("what's my total")
+    # stay accurate even though we only send a trimmed window of raw records
+    # below -- sending all 500 on every single query is what was pinning CPU
+    # and blowing past the timeout on local/CPU-only inference.
+    income_total = ledger_df.loc[ledger_df["Type"] == "Income", "Amount (KES)"].sum()
+    expense_total = ledger_df.loc[ledger_df["Type"] == "Expense", "Amount (KES)"].sum()
+    totals_summary = (
+        f"Overall totals across all {len(ledger_df)} transactions: "
+        f"received KES {income_total:,.2f}, spent KES {expense_total:,.2f}, "
+        f"net KES {income_total - expense_total:,.2f}."
+    )
+
     ledger_data = (
         ledger_df
         .fillna("")
-        .tail(500)
+        .tail(max_context_rows)
         .to_dict(orient="records")
     )
 
@@ -46,7 +58,12 @@ def ask_ledger_ai(
     prompt = f"""
 You are Biashara Bookkeeper AI, an expert financial analyst for small businesses in Kenya.
 
-YOUR SOURCE OF TRUTH (LEDGER RECORDS):
+{totals_summary}
+(Use this pre-computed figure for any "total"/"balance"/"overall" question --
+it covers the FULL ledger, even though the individual records below are
+limited to the most recent {max_context_rows} for readability.)
+
+YOUR SOURCE OF TRUTH (RECENT LEDGER RECORDS, most recent {max_context_rows}):
 {json.dumps(ledger_data, default=str)}
 
 Known Entities: {entities}
@@ -117,12 +134,12 @@ You MUST return valid JSON ONLY. Use this exact schema:
             content = response.text
 
         elif provider == "NVIDIA":
-            # Must point at NVIDIA's endpoint with NVIDIA_API_KEY, exactly like
-            # ai_router.py's process_sms_with_ai does -- otherwise this silently
-            # falls through to the real OpenAI API with a key that doesn't exist.
-            client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=os.getenv("NVIDIA_API_KEY"))
+            client = OpenAI(
+                base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+                api_key=os.getenv("NVIDIA_API_KEY"),
+            )
             response = client.chat.completions.create(
-                model="meta/llama3-70b-instruct",
+                model=os.getenv("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct"),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
             )

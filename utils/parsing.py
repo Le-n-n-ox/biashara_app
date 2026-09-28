@@ -6,6 +6,7 @@ Deliberately has NO import of streamlit or any UI module, so it can be
 safely imported from a plain FastAPI/uvicorn process without pulling in
 st.set_page_config(), init_db() side effects, or a ScriptRunContext error.
 """
+import copy
 import re
 from datetime import datetime
 from functools import lru_cache
@@ -34,7 +35,7 @@ def infer_channel(line: str) -> str:
 
 
 @lru_cache(maxsize=128)
-def process_receipt_pipeline(raw_text: str) -> list[dict]:
+def _parse_receipts_cached(raw_text: str) -> list[dict]:
     """Rule-based (no AI) parser. Includes an inline fraud-detection guard,
     so any caller of this function already gets suspicious lines filtered out."""
     parsed_data = []
@@ -114,6 +115,13 @@ def process_receipt_pipeline(raw_text: str) -> list[dict]:
             "Channel": infer_channel(line),
         })
     return parsed_data
+
+
+def process_receipt_pipeline(raw_text: str) -> list[dict]:
+    """Cached rule-based parse. Callers edit the returned dicts (entity-memory
+    categories), so hand out a copy - otherwise one user's edits leak into the
+    cache and show up in the next user's parse of the same text."""
+    return copy.deepcopy(_parse_receipts_cached(raw_text))
 
 
 def process_with_ai(raw_text: str, provider: str, user_id: int | None = None) -> list[dict]:

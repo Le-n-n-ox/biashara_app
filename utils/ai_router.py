@@ -17,7 +17,7 @@ class Ledger(BaseModel):
 
 def process_sms_with_ai(sms_input: str, model_provider: str) -> list[dict]:
     """
-    Sends raw SMS text to the selected AI provider (NVIDIA, GEMINI, or OLLAMA)
+    Sends raw SMS text to the selected AI provider (NVIDIA, OPENAI, GEMINI, or OLLAMA)
     and returns a clean list of transaction dictionaries.
     """
     prompt = f"""
@@ -38,9 +38,12 @@ def process_sms_with_ai(sms_input: str, model_provider: str) -> list[dict]:
     
     # --- AI Provider Routing ---
     if model_provider == "NVIDIA":
-        client = OpenAI(base_url="https://integrate.api.nvidia.com/v1", api_key=os.getenv("NVIDIA_API_KEY"))
+        client = OpenAI(
+            base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+            api_key=os.getenv("NVIDIA_API_KEY"),
+        )
         response = client.chat.completions.create(
-            model="meta/llama3-70b-instruct",
+            model=os.getenv("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct"),
             messages=[{"role": "user", "content": prompt}],
             temperature=0.1
         )

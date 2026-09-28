@@ -14,5 +14,6 @@ SpeechRecognition
 streamlit-mic-recorder
 phonenumbers
 psycopg2-binary
+plotly
 # Optional: redis
 # Optional: supabase

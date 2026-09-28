@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
 
+# Must run BEFORE the routers are imported: they read MODEL_PROVIDER at import time,
+# so loading .env afterwards silently left the API on the OLLAMA default.
+load_dotenv()
+
 # Import the modular routers
 from routers.whatsapp import router as whatsapp_router
 from routers.integrations import router as integrations_router
-
-load_dotenv()
 
 app = FastAPI(
     title="Biashara Bookkeeper API",
